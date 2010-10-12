@@ -1,0 +1,100 @@
+#! /bin/sh /usr/share/dpatch/dpatch-run
+## 02_fix_i386_on_amd64.dpatch by  <awoodland@debian.org>
+##
+## All lines beginning with `## DP:' are a description of the patch.
+## DP: Add support for kernel architecture not being the same as userland
+
+@DPATCH@
+diff -urNad blcr-0.8.2~/config/kbuild.mak.in blcr-0.8.2/config/kbuild.mak.in
+--- blcr-0.8.2~/config/kbuild.mak.in	2008-08-04 19:39:29.000000000 +0100
++++ blcr-0.8.2/config/kbuild.mak.in	2009-10-22 19:19:53.000000000 +0100
+@@ -1,7 +1,7 @@
+ # Here are the configuration bits needed in the "caller" to use this file
+ #SUBDIR = vmadump4
+ #TARGET = vmadump
+-#SOURCES = vmadump_common.c vmadump_@CR_ARCH@.c optional.h
++#SOURCES = vmadump_common.c vmadump_@CR_KARCH@.c optional.h
+ #[optional]EXTRA_CFLAGS = -I$(top_builddir)/include -I$(top_builddir) -I$(srcdir)
+ #[optional]IMPORTS_FROM = /some/other/kbuild/module/dir /and/another
+ #
+diff -urNad blcr-0.8.2~/configure.ac blcr-0.8.2/configure.ac
+--- blcr-0.8.2~/configure.ac	2009-10-22 19:19:39.000000000 +0100
++++ blcr-0.8.2/configure.ac	2009-10-22 19:19:53.000000000 +0100
+@@ -844,6 +844,22 @@
+ # Checks for matching (we hope) symbol table
+ CR_LINUX_SYMTAB
+ 
++# Set and substitute CR_KARCH to enable i386 userland on x86_64 kernels
++CR_KARCH=$CR_ARCH
++if test $CR_ARCH = i386; then
++       # probe the System.map to find out if we need to change CR_KARCH at all.
++       # All this does is count the number of *digits* in a hex formatted address
++       AC_MSG_NOTICE([Testing if KARCH is the same as ARCH])
++       symlen=`$LINUX_SYMTAB_CMD | head -n1 | sed 's/ .*$//;s/\(.\)/\1\n/g;s/\n$//'|wc -l`
++       if test $symlen -eq 16; then
++               AC_MSG_NOTICE([Changing KARCH to x86_64])
++               CR_KARCH=x86_64
++       else
++               AC_MSG_NOTICE([Not touching KARCH])
++       fi
++fi
++AC_SUBST([CR_KARCH], $CR_KARCH)
++
+ ## Check for optional kernel headers...
+ CR_CHECK_KERNEL_HEADER([linux/syscalls.h])
+ CR_CHECK_KERNEL_HEADER([linux/pspace.h])
+@@ -1026,7 +1042,7 @@
+ if test -n "${HAVE_MAP_VSYSCALL}"; then
+   CR_FIND_KSYM([map_vsyscall],[CODE])
+ fi
+-if test $CR_ARCH = x86_64; then
++if test $CR_KARCH = x86_64; then
+   CR_FIND_KSYM([syscall32_setup_pages],[CODE],
+ 	[extern int syscall32_setup_pages(void *, int);])
+ fi
+@@ -1094,7 +1110,7 @@
+ CR_FIND_KSYM([do_sigaltstack],[CODE],
+ 	[extern int do_sigaltstack(const stack_t *, stack_t *, unsigned long);])
+ 
+-if test $CR_ARCH = i386 -o $CR_ARCH = x86_64; then
++if test $CR_KARCH = i386 -o $CR_KARCH = x86_64; then
+   CR_CHECK_KERNEL_TYPE([struct n_desc_struct],[
+ 	#include <linux/sched.h>
+ 	#include <asm/desc.h>])
+@@ -1145,7 +1161,7 @@
+   fi
+ fi
+ 
+-if test $CR_ARCH = i386; then
++if test $CR_KARCH = i386; then
+   CR_CHECK_KERNEL_MEMBER([pt_regs.xcs],[#include <asm/ptrace.h>],[struct pt_regs],[int],[xcs])
+   CR_CHECK_KERNEL_MEMBER([pt_regs.xfs],[#include <asm/ptrace.h>],[struct pt_regs],[int],[xfs])
+   CR_CHECK_KERNEL_MEMBER([pt_regs.xgs],[#include <asm/ptrace.h>],[struct pt_regs],[int],[xgs])
+@@ -1493,7 +1509,7 @@
+ CR_FIND_KSYM([sys_mremap],[CODE],
+ 	[extern asmlinkage unsigned long sys_mremap(unsigned long addr, unsigned long old_len, unsigned long new_len, unsigned long flags, unsigned long new_addr);])
+ CR_FIND_KSYM([do_sigaction],[CODE])
+-if test $CR_ARCH = x86_64; then
++if test $CR_KARCH = x86_64; then
+   CR_FIND_KSYM([load_gs_index],[CODE])
+ 
+   CR_CHECK_KERNEL_CALL([read_pda],[#include <asm/percpu.h>])
+diff -urNad blcr-0.8.2~/cr_module/Makefile.am blcr-0.8.2/cr_module/Makefile.am
+--- blcr-0.8.2~/cr_module/Makefile.am	2008-09-03 01:29:00.000000000 +0100
++++ blcr-0.8.2/cr_module/Makefile.am	2009-10-22 19:19:53.000000000 +0100
+@@ -31,13 +31,13 @@
+ 
+ BPROC_VERSION	= "4.0.0pre8"
+ vmadump_dir	= $(top_srcdir)/vmadump4
+-vmad_sources	= $(vmadump_dir)/vmadump_common.c $(vmadump_dir)/vmadump_@CR_ARCH@.c
++vmad_sources	= $(vmadump_dir)/vmadump_common.c $(vmadump_dir)/vmadump_@CR_KARCH@.c
+ vmad_include	= -I$(vmadump_dir) -D__NR_vmadump=-1 -DBPROC_VERSION='$(BPROC_VERSION)'
+ 
+ cr_sources	= $(my_sources) $(vmad_sources)
+ INCLUDES =	-I$(top_builddir)/include	\
+ 		-I$(top_srcdir)/include		\
+-		-I$(srcdir)/arch/@CR_ARCH@	\
++		-I$(srcdir)/arch/@CR_KARCH@	\
+ 		$(vmad_include)
+ 
+ # echo an arbitrary make/environment variable (needed by kbuild glue)

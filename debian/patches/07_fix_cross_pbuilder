@@ -1,0 +1,21 @@
+Index: blcr-0.8.2/configure.ac
+===================================================================
+--- blcr-0.8.2.orig/configure.ac	2010-10-12 10:39:32.000000000 +0100
++++ blcr-0.8.2/configure.ac	2010-10-12 10:42:49.000000000 +0100
+@@ -215,6 +215,7 @@
+     ;;
+   x86_64)
+     CR_ARCH32=i686
++    CR_LIBARCH32=i386
+     cr_wordsize=8
+     ;;
+   ppc64|powerpc64)
+@@ -683,7 +684,7 @@
+ CR_LIBARCH=$CR_ARCH
+ if test $ac_cv_sizeof_void_p != $cr_wordsize; then
+   if test $cr_wordsize = 8; then
+-    CR_LIBARCH=$CR_ARCH32
++    CR_LIBARCH=${CR_LIBARCH32:-$CR_ARCH32}
+   else
+     AC_MSG_ERROR([CC='$CC' yields sizeof(void *) = $ac_cv_sizeof_void_p when expecting $cr_wordsize.$clue])
+   fi

@@ -1,0 +1,51 @@
+Index: blcr-0.8.2/blcr_imports/module.c
+===================================================================
+--- blcr-0.8.2.orig/blcr_imports/module.c	2009-12-20 18:27:40.000000000 +0000
++++ blcr-0.8.2/blcr_imports/module.c	2009-12-20 18:27:20.000000000 +0000
+@@ -81,7 +81,13 @@
+ 
+ 	/* Check current kernel against System.map used at configure time */
+ 	{
++#if defined(CR_EXPORTED_KCODE_register_chrdev)
+ 	    unsigned long offset1 = CR_EXPORTED_KCODE_register_chrdev - (unsigned long)&register_chrdev;
++#elif defined(CR_EXPORTED_KCODE___register_chrdev)
++	    unsigned long offset1 = CR_EXPORTED_KCODE___register_chrdev - (unsigned long)&__register_chrdev;
++#else
++	    #error "No register_chrdev symbol for validation of System.map"
++#endif
+ 	    unsigned long offset2 = CR_EXPORTED_KCODE_register_blkdev - (unsigned long)&register_blkdev;
+ 	    if (
+ #if defined(CONFIG_RELOCATABLE) && defined(CONFIG_PHYSICAL_ALIGN)
+Index: blcr-0.8.2/configure.ac
+===================================================================
+--- blcr-0.8.2.orig/configure.ac	2009-12-20 18:27:39.000000000 +0000
++++ blcr-0.8.2/configure.ac	2009-12-20 18:27:20.000000000 +0000
+@@ -1554,7 +1554,10 @@
+ # the System.map used to locate symbols and configure time.
+ CR_FIND_EXPORTED_KSYM([register_chrdev],[CODE])
+ if test "$cr_addr" = "0"; then
+-  CR_BAD_KERNEL([kernel does not export register_chrdev])
++  CR_FIND_EXPORTED_KSYM([__register_chrdev],[CODE])
++  if test "$cr_addr" = "0"; then
++    CR_BAD_KERNEL([kernel does not export register_chrdev or __register_chrdev])
++  fi
+ fi
+ CR_FIND_EXPORTED_KSYM([register_blkdev],[CODE])
+ if test "$cr_addr" = "0"; then
+Index: blcr-0.8.2/include/blcr_ksyms.h
+===================================================================
+--- blcr-0.8.2.orig/include/blcr_ksyms.h	2009-12-20 19:49:37.000000000 +0000
++++ blcr-0.8.2/include/blcr_ksyms.h	2009-12-20 19:51:03.000000000 +0000
+@@ -55,7 +55,11 @@
+ 
+ #if defined(__i386__) || defined(__x86_64__)
+   #ifdef CONFIG_RELOCATABLE
+-    #define _CR_RELOC_KSYM(_addr) (_addr - CR_EXPORTED_KCODE_register_chrdev + register_chrdev)
++    #ifndef CR_EXPORTED_KCODE___register_chrdev
++      #define _CR_RELOC_KSYM(_addr) (_addr - CR_EXPORTED_KCODE_register_chrdev + register_chrdev)
++    #else
++      #define _CR_RELOC_KSYM(_addr) (_addr - CR_EXPORTED_KCODE___register_chrdev + __register_chrdev)
++    #endif
+   #else
+     #define _CR_RELOC_KSYM(_addr) _addr
+   #endif

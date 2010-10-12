@@ -1,0 +1,388 @@
+Index: blcr-0.8.2/acinclude.m4
+===================================================================
+--- blcr-0.8.2.orig/acinclude.m4	2010-09-28 15:02:44.000000000 +0100
++++ blcr-0.8.2/acinclude.m4	2010-09-28 15:01:26.000000000 +0100
+@@ -246,8 +246,8 @@
+     my ($srcdir, $cpp_cmd) = @ARGV;
+     my $stamp = time;
+     $cpp_cmd =~ s/([#()])/\\$1/g; # quote problematic shell metachars
+-    FILE: foreach my $file qw/version.h utsrelease.h/ {
+-      my $path = "$srcdir/include/linux/$file";
++    FILE: foreach my $file qw(linux/version.h linux/utsrelease.h generated/utsrelease.h) {
++      my $path = "$srcdir/include/$file";
+       next FILE unless (-f $path);
+       open(F, "echo '=${stamp}->UTS_RELEASE<-' | ${cpp_cmd} -include ${path} - |") || exit 1;
+       LINE: while (<F>) {
+@@ -577,6 +577,14 @@
+   done])
+   KCFLAGS="$cr_cvname"
+   popdef([cr_cvname])[]dnl
++  AC_MSG_CHECKING([if autoconf.h is included implicitly])
++  if echo "$KCFLAGS" | grep 'include [[^ ]]*/autoconf\.h' >/dev/null 2>&1; then
++    AC_MSG_RESULT([yes]);
++  else
++    AC_MSG_RESULT([no]);
++    AC_DEFINE([CR_NEED_AUTOCONF_H], [1])
++    AH_TEMPLATE([CR_NEED_AUTOCONF_H], [Define to 1 if linux/autoconf.h must be included explicitly])
++  fi
+   # Do these init steps early, in case first CR_FIND_KSYM is a conditional call
+   AC_REQUIRE([_CR_KSYM_INIT_PATTS])
+   AC_REQUIRE([_CR_KSYM_INIT_FILES])
+@@ -1046,7 +1054,9 @@
+   # XXX: Currently just check SMPness. Can this be more aggressive?
+   AC_MSG_CHECKING([for SMP kernel source])
+   CR_CACHED_KERNEL_COMPILE([smp_source],[
+-	#include <linux/autoconf.h>
++	#ifdef CR_NEED_AUTOCONF_H
++	  #include <linux/autoconf.h>
++	#endif
+ 	#ifndef CONFIG_SMP
+ 	    choke me
+ 	#endif
+@@ -1074,11 +1084,11 @@
+ AC_DEFUN([_CR_KSYM_INIT_PATTS],[
+   case "$CR_ARCH" in
+     ppc64)
+-      CR_KSYM_PATTERN_DATA=['[bBdDrRtT] ']
++      CR_KSYM_PATTERN_DATA=['[bBdDgGrRsStTvV] ']
+       CR_KSYM_PATTERN_CODE=['[dD] ']   dnl Function descriptor is data
+       ;;
+     *)
+-      CR_KSYM_PATTERN_DATA=['[bBdDrRtT] ']
++      CR_KSYM_PATTERN_DATA=['[bBdDgGrRsStTvV] ']
+       CR_KSYM_PATTERN_CODE=['[tT] ']
+       ;;
+   esac
+@@ -1249,8 +1259,10 @@
+   pushdef([cr_cvname],cr_cv_kconfig_kmalloc_max)[]dnl
+   AC_CACHE_CHECK([[kernel for maximum kmalloc() allocation]],cr_cvname,[
+     cr_kmalloc_default="131072 (default)"
++    cr_header="${LINUX_OBJ}/include/generated/autoconf.h"
++    test -e "$cr_header" || cr_header="${LINUX_OBJ}/include/linux/autoconf.h"
+     cr_cvname=`eval "$CPP $CPPFLAGS -I${LINUX_OBJ}/include \
+-			-include ${LINUX_OBJ}/include/linux/autoconf.h\
++			-include ${cr_header} \
+ 			${LINUX_OBJ}/include/linux/kmalloc_sizes.h" 2>/dev/null | \
+ 		$PERL -n -e 'BEGIN {$max=0;}' \
+ 			 -e ['if (/CACHE\s*\(\s*([0-9]+)\s*\)/ && ($][1 > $max)) { $max = $][1; }'] \
+Index: blcr-0.8.2/blcr_imports/module.c
+===================================================================
+--- blcr-0.8.2.orig/blcr_imports/module.c	2010-09-28 15:02:44.000000000 +0100
++++ blcr-0.8.2/blcr_imports/module.c	2010-09-28 15:01:26.000000000 +0100
+@@ -26,7 +26,9 @@
+ 
+ #include "blcr_config.h"
+ 
++#ifdef CR_NEED_AUTOCONF_H
+ #include <linux/autoconf.h>
++#endif
+ #if defined(CONFIG_SMP) && ! defined(__SMP__)
+   #define __SMP__
+ #endif
+@@ -56,7 +58,11 @@
+ #endif
+ #include <linux/version.h>
+ #ifndef UTS_RELEASE
++ #if HAVE_LINUX_UTSRELEASE_H
+   #include <linux/utsrelease.h>
++ #elif HAVE_GENERATED_UTSRELEASE_H
++  #include <generated/utsrelease.h>
++ #endif
+ #endif
+ #if HAVE_LINUX_COMPILE_H
+   #include <linux/compile.h>
+Index: blcr-0.8.2/configure.ac
+===================================================================
+--- blcr-0.8.2.orig/configure.ac	2010-09-28 15:02:44.000000000 +0100
++++ blcr-0.8.2/configure.ac	2010-09-28 15:01:26.000000000 +0100
+@@ -868,11 +868,15 @@
+ CR_CHECK_KERNEL_HEADER([linux/compile.h])
+ CR_CHECK_KERNEL_HEADER([linux/fdtable.h])
+ CR_CHECK_KERNEL_HEADER([linux/utrace.h])
++CR_CHECK_KERNEL_HEADER([linux/perf_event.h])
+ CR_CHECK_KERNEL_HEADER([asm/elf.h])
+ CR_CHECK_KERNEL_HEADER([asm/desc.h],[#include <linux/sched.h>])
+ CR_CHECK_KERNEL_HEADER([asm/vsyscall32.h])
+ CR_CHECK_KERNEL_HEADER([asm/i387.h])
+ 
++CR_CHECK_KERNEL_HEADER([linux/utsrelease.h])
++CR_CHECK_KERNEL_HEADER([generated/utsrelease.h])
++
+ ## Now we check for specific kernel features...
+ 
+ CR_FIND_KSYM([timeval_to_jiffies],[CODE])
+@@ -1136,6 +1140,10 @@
+ 	[struct thread_struct],[unsigned long],[debugreg0])
+   CR_CHECK_KERNEL_MEMBER([thread.debugregs],[#include <asm/processor.h>],
+ 	[struct thread_struct],[unsigned long],[debugreg[1]])
++  CR_CHECK_KERNEL_MEMBER([thread.ptrace_bps],[
++	#include <linux/perf_event.h>
++	#include <asm/processor.h>],
++	[struct thread_struct],[struct perf_event *],[ptrace_bps[1]])
+   CR_CHECK_KERNEL_MEMBER([thread.i387],[#include <asm/processor.h>],
+ 	[struct thread_struct],[union i387_union],[i387])
+   CR_CHECK_KERNEL_MEMBER([thread.xstate],[#include <asm/processor.h>],
+@@ -1523,7 +1531,10 @@
+     else
+       CR_FIND_KSYM([per_cpu__old_rsp],[DATA],[DECLARE_PER_CPU(unsigned long, old_rsp);])
+       if test -z "$cr_addr"; then
+-        AC_MSG_ERROR([failed to locate symbol per_cpu__old_rsp])
++        CR_FIND_KSYM([old_rsp],[DATA],[DECLARE_PER_CPU(unsigned long, old_rsp);])
++        if test -z "$cr_addr"; then
++          AC_MSG_ERROR([failed to locate either symbol per_cpu__old_rsp or old_rsp])
++        fi
+       fi
+     fi
+   fi
+Index: blcr-0.8.2/cr_module/cr_chkpt_req.c
+===================================================================
+--- blcr-0.8.2.orig/cr_module/cr_chkpt_req.c	2010-09-28 15:02:43.000000000 +0100
++++ blcr-0.8.2/cr_module/cr_chkpt_req.c	2010-09-28 15:01:26.000000000 +0100
+@@ -321,9 +321,13 @@
+ #elif HAVE_TASK_PTRACE
+ 	struct task_struct *child;
+ 	CR_DO_EACH_CHILD(child, task) {
+-		if (child->ptrace & PT_PTRACED) {
++	    struct task_struct *thread = child;
++	    if (!thread_group_leader(child)) continue;
++	    do {
++		if (thread->ptrace & PT_PTRACED) {
+ 			return 1;
+ 		}
++	    } while_each_thread(child, thread);
+ 	} CR_WHILE_EACH_CHILD(child, task);
+ 	return 0;
+ #else
+@@ -730,12 +734,15 @@
+ 
+ 			/* Add all the children - we get their children in the list_for_each() */
+ 			CR_DO_EACH_CHILD(child, task) {
+-
+-				if (child->mm == root_mm) continue;	/* Already visited */
+-				result = add_task(req, child);
++			    struct task_struct *thread = child;
++			    if (!thread_group_leader(child)) continue;
++			    do {
++				if (thread->mm == root_mm) continue;	/* Already visited */
++				result = add_task(req, thread);
+ 				if (result) {
+ 					goto out_fail;
+ 				}
++			    } while_each_thread(child, thread);
+ 			} CR_WHILE_EACH_CHILD(child, task);
+ 		}
+ 	}
+Index: blcr-0.8.2/cr_module/cr_module.h
+===================================================================
+--- blcr-0.8.2.orig/cr_module/cr_module.h	2010-09-28 15:02:43.000000000 +0100
++++ blcr-0.8.2/cr_module/cr_module.h	2010-09-28 15:01:26.000000000 +0100
+@@ -31,7 +31,9 @@
+ #include "blcr_config.h"	// Configuration
+ 
+ #include <linux/module.h>
++#ifdef CR_NEED_AUTOCONF_H
+ #include <linux/autoconf.h>
++#endif
+ 
+ #include <linux/kernel.h>
+ #include <linux/types.h>
+Index: blcr-0.8.2/cr_module/cr_rstrt_req.c
+===================================================================
+--- blcr-0.8.2.orig/cr_module/cr_rstrt_req.c	2010-09-28 15:02:43.000000000 +0100
++++ blcr-0.8.2/cr_module/cr_rstrt_req.c	2010-09-28 15:01:26.000000000 +0100
+@@ -1085,6 +1085,7 @@
+     list_for_each_entry(entry, &req->linkage, list) {
+ 	struct task_struct *task = entry->tl_task;
+ 	int is_leader = (entry->link.pid == entry->link.tgid);
++	int need_set_links = !(list_empty(&task->sibling));
+ 
+ 	/* thread_group is already correct by virtue of how we create threads */
+ 	CRI_ASSERT(is_leader == thread_group_leader(task));
+@@ -1094,7 +1095,7 @@
+ #ifdef CR_REAL_PARENT
+ 	CR_REAL_PARENT(task) = entry->link.real_parent;
+ #endif
+-	SET_LINKS(task);
++	if (need_set_links) { SET_LINKS(task); }
+ 
+ 	if (pid_flags & CR_RSTRT_RESTORE_PID) {
+ 	    cr_change_pid(task, PIDTYPE_PID, entry->link.pid);
+Index: blcr-0.8.2/include/blcr_imports.h.in
+===================================================================
+--- blcr-0.8.2.orig/include/blcr_imports.h.in	2010-09-28 15:02:43.000000000 +0100
++++ blcr-0.8.2/include/blcr_imports.h.in	2010-09-28 15:01:26.000000000 +0100
+@@ -33,7 +33,9 @@
+ #ifndef _BLCR_IMPORTS_H
+ #define _BLCR_IMPORTS_H	1
+ 
++#ifdef CR_NEED_AUTOCONF_H
+ #include <linux/autoconf.h>
++#endif
+ #if defined(CONFIG_SMP) && ! defined(__SMP__)
+   #define __SMP__
+ #endif
+Index: blcr-0.8.2/vmadump4/vmadump_alpha.c
+===================================================================
+--- blcr-0.8.2.orig/vmadump4/vmadump_alpha.c	2010-09-28 15:02:45.000000000 +0100
++++ blcr-0.8.2/vmadump4/vmadump_alpha.c	2010-09-28 15:01:26.000000000 +0100
+@@ -21,7 +21,9 @@
+  *-----------------------------------------------------------------------*/
+ #define __NO_VERSION__
+ 
++#ifdef CR_NEED_AUTOCONF_H
+ #include <linux/autoconf.h>
++#endif
+ #if defined(CONFIG_SMP) && ! defined(__SMP__)
+ #define __SMP__
+ #endif
+Index: blcr-0.8.2/vmadump4/vmadump_i386.c
+===================================================================
+--- blcr-0.8.2.orig/vmadump4/vmadump_i386.c	2010-09-28 15:02:45.000000000 +0100
++++ blcr-0.8.2/vmadump4/vmadump_i386.c	2010-09-28 15:01:26.000000000 +0100
+@@ -190,7 +190,7 @@
+ 
+     /* XXX FIX ME: RESTORE DEBUG INFORMATION ?? */
+     /* Here we read it but ignore it. */
+-    r = vmadump_restore_debugreg(ctx, file, threadtmp);
++    r = vmadump_restore_debugreg(ctx, file);
+     if (r < 0) goto bad_read;
+ 
+     /* Restore TLS information */
+Index: blcr-0.8.2/vmadump4/vmadump_x86.h
+===================================================================
+--- blcr-0.8.2.orig/vmadump4/vmadump_x86.h	2010-09-28 15:02:45.000000000 +0100
++++ blcr-0.8.2/vmadump4/vmadump_x86.h	2010-09-28 15:01:26.000000000 +0100
+@@ -26,6 +26,9 @@
+ 
+ #include <asm/desc.h>
+ #include <asm/i387.h>
++#if HAVE_LINUX_PERF_EVENT_H
++  #include <linux/perf_event.h>
++#endif
+ 
+ /* set_used_math() first appears in 2.6.11 */
+ #ifndef set_used_math
+@@ -214,42 +217,38 @@
+ /* Save debugging state */
+ static
+ long vmadump_store_debugreg(cr_chkpt_proc_req_t *ctx, struct file *file) {
++    struct thread_struct *const thread = &current->thread;
++    unsigned long debugregs[6];
+     long r, bytes = 0;
+ 
+ #if HAVE_THREAD_DEBUGREGS
+-    r = write_kern(ctx, file, &current->thread.debugreg,
+-		   sizeof(current->thread.debugreg));
+-    if (r != sizeof(current->thread.debugreg)) goto err;
+-    bytes += r;
++    {	int i;
++	for (i=0; i<6; ++i) debugregs[i] = thread->debugreg[i];
++    }
+ #elif HAVE_THREAD_DEBUGREG0
+-    r = write_kern(ctx, file, &current->thread.debugreg0,
+-		   sizeof(current->thread.debugreg0));
+-    if (r != sizeof(current->thread.debugreg0)) goto err;
+-    bytes += r;
+-    r = write_kern(ctx, file, &current->thread.debugreg1,
+-		   sizeof(current->thread.debugreg1));
+-    if (r != sizeof(current->thread.debugreg1)) goto err;
+-    bytes += r;
+-    r = write_kern(ctx, file, &current->thread.debugreg2,
+-		   sizeof(current->thread.debugreg2));
+-    if (r != sizeof(current->thread.debugreg2)) goto err;
+-    bytes += r;
+-    r = write_kern(ctx, file, &current->thread.debugreg3,
+-		   sizeof(current->thread.debugreg3));
+-    if (r != sizeof(current->thread.debugreg3)) goto err;
+-    bytes += r;
+-    r = write_kern(ctx, file, &current->thread.debugreg6,
+-		   sizeof(current->thread.debugreg6));
+-    if (r != sizeof(current->thread.debugreg6)) goto err;
+-    bytes += r;
+-    r = write_kern(ctx, file, &current->thread.debugreg7,
+-		   sizeof(current->thread.debugreg7));
+-    if (r != sizeof(current->thread.debugreg7)) goto err;
+-    bytes += r;
++    debugregs[0] = thread->debugreg0;
++    debugregs[1] = thread->debugreg1;
++    debugregs[2] = thread->debugreg2;
++    debugregs[3] = thread->debugreg3;
++    debugregs[4] = thread->debugreg6;
++    debugregs[5] = thread->debugreg7;
++#elif HAVE_THREAD_PTRACE_BPS
++    {	int i;
++	for (i=0; i<4; ++i) {
++	    struct perf_event *bp = thread->ptrace_bps[i];
++	    debugregs[i] = bp ? bp->hw.info.address : 0;
++	}
++	debugregs[4] = thread->debugreg6;
++	debugregs[5] = thread->ptrace_dr7; /* XXX: is this correct? */
++    }
+ #else
+     #error
+ #endif
+ 
++    r = write_kern(ctx, file, &debugregs, sizeof(debugregs));
++    if (r != sizeof(debugregs)) goto err;
++    bytes += r;
++
+     return bytes;
+ 
+  err:
+@@ -259,29 +258,12 @@
+ 
+ /* Read (but don't restore) debugging state */
+ static
+-int vmadump_restore_debugreg(cr_rstrt_proc_req_t *ctx, struct file *file,
+-                             struct thread_struct *threadtmp) {
++int vmadump_restore_debugreg(cr_rstrt_proc_req_t *ctx, struct file *file) {
++    unsigned long debugregs[6];
+     int r;
+ 
+-#if HAVE_THREAD_DEBUGREGS
+-    r = read_kern(ctx, file, threadtmp->debugreg, sizeof(threadtmp->debugreg));
+-    if (r != sizeof(threadtmp->debugreg)) goto bad_read;
+-#elif HAVE_THREAD_DEBUGREG0
+-    r = read_kern(ctx, file, &threadtmp->debugreg0, sizeof(threadtmp->debugreg0));
+-    if (r != sizeof(threadtmp->debugreg0)) goto bad_read;
+-    r = read_kern(ctx, file, &threadtmp->debugreg1, sizeof(threadtmp->debugreg1));
+-    if (r != sizeof(threadtmp->debugreg1)) goto bad_read;
+-    r = read_kern(ctx, file, &threadtmp->debugreg2, sizeof(threadtmp->debugreg2));
+-    if (r != sizeof(threadtmp->debugreg2)) goto bad_read;
+-    r = read_kern(ctx, file, &threadtmp->debugreg3, sizeof(threadtmp->debugreg3));
+-    if (r != sizeof(threadtmp->debugreg3)) goto bad_read;
+-    r = read_kern(ctx, file, &threadtmp->debugreg6, sizeof(threadtmp->debugreg6));
+-    if (r != sizeof(threadtmp->debugreg6)) goto bad_read;
+-    r = read_kern(ctx, file, &threadtmp->debugreg7, sizeof(threadtmp->debugreg7));
+-    if (r != sizeof(threadtmp->debugreg7)) goto bad_read;
+-#else
+-    #error
+-#endif
++    r = read_kern(ctx, file, &debugregs, sizeof(debugregs));
++    if (r != sizeof(debugregs)) goto bad_read;
+ 
+     return 0;
+ 
+Index: blcr-0.8.2/vmadump4/vmadump_x86_64.c
+===================================================================
+--- blcr-0.8.2.orig/vmadump4/vmadump_x86_64.c	2010-09-28 15:02:45.000000000 +0100
++++ blcr-0.8.2/vmadump4/vmadump_x86_64.c	2010-09-28 15:01:26.000000000 +0100
+@@ -21,7 +21,9 @@
+  *
+  * THIS VERSION MODIFIED FOR BLCR <http://ftg.lbl.gov/checkpoint>
+  *-----------------------------------------------------------------------*/
++#ifdef CR_NEED_AUTOCONF_H
+ #include <linux/autoconf.h>
++#endif
+ #if defined(CONFIG_SMP) && ! defined(__SMP__)
+ #define __SMP__
+ #endif
+@@ -202,7 +204,7 @@
+ 	
+     /* XXX FIX ME: RESTORE DEBUG INFORMATION ?? */
+     /* Here we read it but ignore it. */
+-    r = vmadump_restore_debugreg(ctx, file, threadtmp);
++    r = vmadump_restore_debugreg(ctx, file);
+     if (r < 0) goto bad_read;
+ 
+     /* user(r)sp, since we don't use the ptrace entry path in BLCR */

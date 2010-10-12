@@ -1,0 +1,43 @@
+Index: blcr-0.8.2/autogen.sh
+===================================================================
+--- blcr-0.8.2.orig/autogen.sh	2008-04-29 19:53:37.000000000 +0100
++++ blcr-0.8.2/autogen.sh	2010-05-18 12:23:34.000000000 +0100
+@@ -1,4 +1,4 @@
+-#! /bin/sh 
++#! /bin/bash
+ #
+ #   Berkeley Lab Checkpoint/Restart (BLCR) for Linux is Copyright (c)
+ #   2008, The Regents of the University of California, through Lawrence
+Index: blcr-0.8.2/config/install-sh
+===================================================================
+--- blcr-0.8.2.orig/config/install-sh	2010-05-18 12:22:48.000000000 +0100
++++ blcr-0.8.2/config/install-sh	2010-05-18 17:20:43.000000000 +0100
+@@ -1,4 +1,4 @@
+-#!/bin/sh
++#!/bin/bash
+ # install - install a program, script, or datafile
+ 
+ scriptversion=2004-02-15.20
+Index: blcr-0.8.2/contrib/batch_build.in
+===================================================================
+--- blcr-0.8.2.orig/contrib/batch_build.in	2007-03-05 21:57:17.000000000 +0000
++++ blcr-0.8.2/contrib/batch_build.in	2010-05-18 12:23:34.000000000 +0100
+@@ -1,4 +1,4 @@
+-#!/bin/sh
++#!/bin/bash
+ # Given a list of kernel build directories on the command line,
+ # this script will try to compile blcr against each of them.
+ # This depends on having a System.map file in the kernel dir
+Index: blcr-0.8.2/acinclude.m4
+===================================================================
+--- blcr-0.8.2.orig/acinclude.m4	2010-05-18 17:20:50.000000000 +0100
++++ blcr-0.8.2/acinclude.m4	2010-05-18 17:21:09.000000000 +0100
+@@ -338,7 +338,7 @@
+   fi
+   # Check that version is acceptible (exact match, or a prefix with the next char non-numeric)
+   case "$cr_linux_obj_ver" in
+-    [${cr_result}|${cr_result}[^0-9]*])      # the outer [] is m4 quoting
++    [${cr_result}|${cr_result}[!0-9]*])      # the outer [] is m4 quoting
+         cr_linux_src_ver="$cr_result";;
+     *)  cr_linux_src_ver='';;
+   esac

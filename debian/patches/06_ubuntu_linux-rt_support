@@ -1,0 +1,27 @@
+Index: blcr-0.8.2/configure.ac
+===================================================================
+--- blcr-0.8.2.orig/configure.ac	2010-03-09 11:28:24.000000000 +0000
++++ blcr-0.8.2/configure.ac	2010-03-09 11:28:53.000000000 +0000
+@@ -1002,7 +1002,7 @@
+ fi
+ 
+ # put_task_struct() requires one of these:
+-CR_FIND_KSYM([__put_task_struct],[CODE])
++CR_FIND_KSYM([__put_task_struct],[CODE],[extern void __put_task_struct(struct task_struct *);])
+ CR_FIND_KSYM([__put_task_struct_cb],[CODE])
+ 
+ CR_CHECK_KERNEL_MEMBER([mm.task_size],[#include <linux/sched.h>],
+Index: blcr-0.8.2/cr_module/cr_kcompat.h
+===================================================================
+--- blcr-0.8.2.orig/cr_module/cr_kcompat.h	2010-03-09 11:29:27.000000000 +0000
++++ blcr-0.8.2/cr_module/cr_kcompat.h	2010-03-09 11:29:45.000000000 +0000
+@@ -584,4 +584,9 @@
+   #error "no cr_do_pipe() definition"
+ #endif
+ 
++#if !defined(DECLARE_MUTEX)
++  #define DECLARE_MUTEX(m) DEFINE_SEMAPHORE(m)
++  #define init_MUTEX(m) sema_init(m, 1)
++#endif
++
+ #endif /* _CR_KCOMPAT_H */
