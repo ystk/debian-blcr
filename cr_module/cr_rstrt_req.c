@@ -21,7 +21,7 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
- * $Id: cr_rstrt_req.c,v 1.393.4.2 2009/06/07 03:27:36 phargrov Exp $
+ * $Id: cr_rstrt_req.c,v 1.393.4.16 2012/12/25 03:27:28 phargrov Exp $
  */
 
 #include "cr_module.h"
@@ -31,6 +31,9 @@
 #include <linux/mman.h>
 #include <linux/major.h>
 #include <asm/uaccess.h>
+#if HAVE_LINUX_AUDIT_H
+#include <linux/audit.h>
+#endif
 
 #include <linux/binfmts.h>
 
@@ -79,15 +82,14 @@ alloc_rstrt_req(void)
 	goto out_modput;
     }
 
-    req = cr_kmem_cache_zalloc(*req, cr_rstrt_req_cachep, GFP_ATOMIC);
+    CR_NO_LOCKS();
+    req = cr_kmem_cache_zalloc(*req, cr_rstrt_req_cachep, GFP_KERNEL);
     if (req) {
 	CR_KTRACE_ALLOC("Alloc cr_rstrt_req_t %p", req);
         atomic_set(&req->ref_count, 1);
 	req->requester = current->tgid;
 	get_task_struct(current);
 	req->cr_restart_task = current;
-	req->cr_restart_stdin = fget(0);
-	req->cr_restart_stdout = fget(1);
 	req->state = CR_RSTRT_STATE_REQUESTER;
 	init_waitqueue_head(&req->wait);
 	cr_barrier_init(&req->barrier, 1);
@@ -101,6 +103,33 @@ alloc_rstrt_req(void)
 	INIT_LIST_HEAD(&req->linkage);
 	CR_INIT_WORK(&req->work, &rstrt_watchdog);
 	req->errbuf = cr_errbuf_alloc();
+	{
+	    struct files_struct *files = current->files;
+	    cr_fdtable_t *fdt;
+	    struct file *tmp;
+
+#if !HAVE_STRUCT_FDTABLE
+	    spin_lock(&files->file_lock);
+#endif
+	    rcu_read_lock();
+	    fdt = cr_fdtable(files);
+	    /* Dup stdin, unless marked CLOEXEC */
+	    tmp = fcheck_files(files, 0);
+	    if (tmp && !cr_read_close_on_exec(0, fdt)) {
+		req->dpipe_in = tmp;
+		get_file(tmp);
+	    }
+	    /* Dup stdout, unless marked CLOEXEC */
+	    tmp = fcheck_files(files, 1);
+	    if (tmp && !cr_read_close_on_exec(1, fdt)) {
+		req->dpipe_out = tmp;
+		get_file(tmp);
+	    }
+	    rcu_read_unlock();
+#if !HAVE_STRUCT_FDTABLE
+	    spin_unlock(&files->file_lock);
+#endif
+	}
     } else {
 	goto out_freemap;
     }
@@ -141,8 +170,8 @@ release_rstrt_req(cr_rstrt_req_t *req)
 	cr_loc_put(&req->src, req->file0);
 	cr_loc_free(&req->src);
 	CR_KTRACE_REFCNT("fput()'ing stdin/out");
-	fput(req->cr_restart_stdin);
-	fput(req->cr_restart_stdout);
+	if (req->dpipe_in) fput(req->dpipe_in);
+	if (req->dpipe_out) fput(req->dpipe_out);
 	CR_KTRACE_REFCNT("put_task_struct(cr_restart_task)");
 	put_task_struct(req->cr_restart_task);
 	cr_release_objectmap(req->map);
@@ -1085,6 +1114,7 @@ cr_restore_linkage(cr_rstrt_req_t *req)
     list_for_each_entry(entry, &req->linkage, list) {
 	struct task_struct *task = entry->tl_task;
 	int is_leader = (entry->link.pid == entry->link.tgid);
+	int need_set_links = !(list_empty(&task->sibling));
 
 	/* thread_group is already correct by virtue of how we create threads */
 	CRI_ASSERT(is_leader == thread_group_leader(task));
@@ -1094,7 +1124,7 @@ cr_restore_linkage(cr_rstrt_req_t *req)
 #ifdef CR_REAL_PARENT
 	CR_REAL_PARENT(task) = entry->link.real_parent;
 #endif
-	SET_LINKS(task);
+	if (need_set_links) { SET_LINKS(task); }
 
 	if (pid_flags & CR_RSTRT_RESTORE_PID) {
 	    cr_change_pid(task, PIDTYPE_PID, entry->link.pid);
@@ -1565,7 +1595,7 @@ cr_restore_open_chr(cr_rstrt_proc_req_t *proc_req, struct cr_file_info *file_inf
 
     /* XXX:  Validate type */
     retval = -EINVAL;
-    if (cf_chrdev.cr_type != cr_open_chr) {
+    if (cf_chrdev.cr_type != cr_chrdev_obj) {
         CR_ERR_PROC_REQ(proc_req, "cr_restore_open_chr: Garbage in context file.");
         goto out;
     }
@@ -1700,7 +1730,7 @@ cr_restore_open_dup(cr_rstrt_proc_req_t *proc_req, struct cr_file_info *file_inf
 
     /* Validate type (the only field we've got) */
     retval = -EINVAL;
-    if (cf_dup.cr_type != cr_open_dup) {
+    if (cf_dup.cr_type != cr_dup_obj) {
         CR_ERR_PROC_REQ(proc_req, "cr_restore_open_dup: Garbage in context file.");
         goto out;
     }
@@ -1793,7 +1823,8 @@ cr_finish_all_file_restores(cr_rstrt_proc_req_t *proc_req, int max_fds)
       struct file *filp;
       filp = fcheck(fd);
       if (filp) {
-        CR_KTRACE_LOW_LVL("fd=%d filp=%p filp->dentry=%p d_count=%d d_inode=%p", fd, filp, filp->f_dentry, atomic_read(&filp->f_dentry->d_count), filp->f_dentry->d_inode);
+        CR_KTRACE_LOW_LVL("fd=%d filp=%p filp->dentry=%p d_inode=%p",
+                          fd, filp, filp->f_dentry, filp->f_dentry->d_inode);
       }
     }
     spin_unlock(&current->files->file_lock);
@@ -1824,7 +1855,7 @@ cr_restore_all_files(cr_rstrt_proc_req_t *proc_req)
     spin_lock(&files->file_lock);
     fdt = cr_fdtable(files);
     for (i = 0; i < fdt->max_fds; ++i) {
-	if (FD_ISSET(i, fdt->close_on_exec)) {
+	if (cr_read_close_on_exec(i, fdt)) {
 	    spin_unlock(&files->file_lock);
 	    sys_close(i);
 	    spin_lock(&files->file_lock);
@@ -1914,9 +1945,9 @@ cr_restore_all_files(cr_rstrt_proc_req_t *proc_req)
         spin_lock(&files->file_lock);
 	fdt = cr_fdtable(files);
         if (file_info.cloexec) {
-	    FD_SET(file_info.fd, fdt->close_on_exec);
+	    cr_set_close_on_exec(file_info.fd, fdt);
         } else {
-	    FD_CLR(file_info.fd, fdt->close_on_exec);
+	    cr_clear_close_on_exec(file_info.fd, fdt);
 	}
 	spin_unlock(&files->file_lock);
 
@@ -1943,29 +1974,27 @@ out:
  * cr_chdir
  *
  * Our own version of the chdir() system call.  Differs in that it accepts
- * pathnames in kernel space, and calls path_init, path_walk, and path_release
- * directly.
+ * pathnames in kernel space, and performs lookup directly.
  * 
  */
 static int
-cr_chdir(const char *path)
+cr_chdir(const char *name)
 {
-    struct nameidata nd;
     int retval;
+    struct path path;
 
-    /* lookup the path */
-    retval = path_lookup(path,LOOKUP_FOLLOW|LOOKUP_DIRECTORY,&nd);
+    retval = cr_kern_path(name, LOOKUP_FOLLOW|LOOKUP_DIRECTORY, &path);
     if (retval)
         goto out;
 
-    retval = cr_permission(nd.nd_dentry->d_inode,MAY_EXEC,&nd);
+    retval = cr_permission(path.dentry->d_inode, MAY_EXEC|MAY_CHDIR);
     if (retval)
-        goto dput_and_out;
+        goto out_put;
 
-    cr_set_pwd_nd(current->fs, &nd);
+    cr_set_pwd_path(current->fs, &path);
 
-dput_and_out:
-    cr_path_release(&nd);
+out_put:
+    path_put(&path);
 out:
     return retval;
 }
@@ -2049,7 +2078,7 @@ cr_hide_filp(struct file *filp, struct files_struct *files)
 	if (filp == fdt->fd[fd]) {
 	    ++found;
             rcu_assign_pointer(fdt->fd[fd], NULL);
-	    FD_CLR(fd, fdt->close_on_exec);
+	    cr_clear_close_on_exec(fd, fdt);
 	    break;
 	}
     }
@@ -2250,6 +2279,56 @@ int cr_rstrt_task_complete(cr_task_t *cr_task, int block, int need_lock)
     return 0;
 }
 
+static inline int cr_free_audit_context(void)
+{
+#if HAVE_CONFIG_AUDITSYSCALL
+  #if HAVE_AUDIT_DUMMY_CONTEXT
+    if (!audit_dummy_context())
+  #else
+    if (current->audit_context)
+  #endif
+    { /* tell auditing that the ioctl() call is finished with. */
+        CR_KTRACE_LOW_LVL("Finishing audit entry.");
+        /* This ioctl() is never supposed to return, so I don't think it 
+         * matters what return values we set here.  (We report errors 
+         * through the request structure)  We're just going to make up a
+         * successful return code to go with the audit context.  
+         *
+         * We do this early to avoid later calls to sys_linkat() from
+         * invoking audit_getname()
+         *
+         * In the RHEL55 2.6.18 kernel, 
+         * we're causing a BUG() by overflowing the names[] entries
+         * in the audit_context structure.  getname() and audit_getname()
+         * add name entries every time they're called.
+         * This call to audit_syscall_exit() frees the names, and
+         * tears down the audit context attached to our process.
+         */
+    #if HAVE_2_6_17_AUDIT_SYSCALL_EXIT
+	/* linux-2.6.17 through ... */
+        audit_syscall_exit(AUDITSC_RESULT(0), 0);
+    #elif HAVE_2_6_12_AUDIT_SYSCALL_EXIT
+	/* linux-2.6.12 through 2.6.16 */
+        audit_syscall_exit(current, AUDITSC_RESULT(0), 0);
+    #elif HAVE_2_6_6_AUDIT_SYSCALL_EXIT
+	/* linux-2.6.6 through 2.6.11 */
+        audit_syscall_exit(current, 0);
+    #elif HAVE___AUDIT_SYSCALL_EXIT
+	/* EL6 kernels */
+        if (unlikely(current->audit_context)) {
+                __audit_syscall_exit(1, 0);
+        }
+    #else
+        #error "Don't know how to call audit_syscall_exit()"
+    #endif
+        return 0;
+    }
+#endif
+
+    /* just return success, there's nothing to do */
+    return 0;
+}
+
 // cr_rstrt_child
 //
 // Invoked by a freshly created child process.
@@ -2315,7 +2394,17 @@ int cr_rstrt_child(struct file *filp)
     down(&proc_req->serial_mutex);
     if (req->die) {
 	up(&proc_req->serial_mutex);
+	retval = 0; /* don't clobber error code from whoever set req->die */
 	goto out_release;
+    }
+
+    /* deallocate audit context */
+    if (cr_free_audit_context() < 0) {
+        CR_ERR_PROC_REQ(proc_req, "Unable to deallocate audit context!");
+        retval = -EINVAL;
+        req->die = 1;
+        up(&proc_req->serial_mutex);
+        goto out_release;
     }
 
     /* Initialize parts of req relevant to restoring task linkage */
@@ -2910,7 +2999,7 @@ int
 cr_rstrt_init(void)
 {
     int retval = 0;
-    cr_linkage_cachep = KMEM_CACHE(cr_linkage_s, 0);
+    cr_linkage_cachep = CR_KMEM_CACHE(cr_linkage_s);
     if (!cr_linkage_cachep) {
 	retval = -ENOMEM;
     }

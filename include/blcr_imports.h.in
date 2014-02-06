@@ -22,7 +22,7 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
- * $Id: blcr_imports.h.in,v 1.14.14.1 2009/06/12 20:37:05 phargrov Exp $
+ * $Id: blcr_imports.h.in,v 1.14.14.2 2010/08/12 21:58:34 phargrov Exp $
  *
  * This file provides otherwise missing declarations for functions
  * and data which BLCR imports via the blcr_imports kernel module.
@@ -33,7 +33,9 @@
 #ifndef _BLCR_IMPORTS_H
 #define _BLCR_IMPORTS_H	1
 
+#ifdef CR_NEED_AUTOCONF_H
 #include <linux/autoconf.h>
+#endif
 #if defined(CONFIG_SMP) && ! defined(__SMP__)
   #define __SMP__
 #endif

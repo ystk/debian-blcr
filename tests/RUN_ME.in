@@ -48,6 +48,7 @@ export cr_testsdir
 tmp_dir=`mktemp -d "${TMPDIR:-/tmp}/blcrtests.XXXXXXXXXX"` || exit 1
 cd $tmp_dir
 #
+export LIBCR_DISABLE_NSCD=1
 top_srcdir="INVALID"; export top_srcdir
 cr_checkpoint="%bindir%/cr_checkpoint"; export cr_checkpoint
 cr_restart="%bindir%/cr_restart"; export cr_restart

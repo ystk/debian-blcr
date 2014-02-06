@@ -22,11 +22,12 @@
 #   along with this program; if not, write to the Free Software
 #   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 #
-# $Id: acinclude.m4,v 1.177.14.2 2009/06/12 20:37:01 phargrov Exp $
-AC_REVISION($Revision: 1.177.14.2 $)
+# $Id: acinclude.m4,v 1.177.14.17 2013/01/05 00:59:58 phargrov Exp $
+AC_REVISION($Revision: 1.177.14.17 $)
 
 # Match all kernels major/minor we might accept
-m4_define([cr_kern_maj_min_patt],[[2\.[46]\.]])[]dnl  No SUBLEVEL or following
+m4_define([cr_kern_maj_min_patt],[[\(2\.6\|3\.[0-9][0-9]*\)\.]])[]dnl  No SUBLEVEL or following
+m4_define([cr_kern_maj_min_perl],[[(2\.6|3\.[0-9]+)\.]])[]dnl  No SUBLEVEL or following
 
 # cr_substr(STRING,OFFSET,[LEN])
 # ------------------------------------------------------
@@ -144,7 +145,10 @@ AC_DEFUN([CR_PROG_GCC],[
 # ------------------------------------------------------
 # Find a C++ compiler and verify that it is word-size compatible with $CC
 # Returns with CXX set to the compiler, or "no"
+# Note bug 2619 reports that CR_PROG_CXX must not be called conditionally
+# because of some internal use of AM_CONDITIONAL()
 AC_DEFUN([CR_PROG_CXX],[
+  AC_REQUIRE([AC_PROG_CC])
   # Totally gross way to perform a non-fatal probe for CXX
   pushdef([AC_MSG_ERROR], [CXX=no])
   AC_REQUIRE([AC_PROG_CXX])
@@ -246,13 +250,13 @@ AC_DEFUN([_CR_EXTRACT_UTS_VERSION],[dnl
     my ($srcdir, $cpp_cmd) = @ARGV;
     my $stamp = time;
     $cpp_cmd =~ s/([#()])/\\$1/g; # quote problematic shell metachars
-    FILE: foreach my $file qw/version.h utsrelease.h/ {
-      my $path = "$srcdir/include/linux/$file";
+    FILE: foreach my $file (qw(linux/version.h linux/utsrelease.h generated/utsrelease.h)) {
+      my $path = "$srcdir/include/$file";
       next FILE unless (-f $path);
       open(F, "echo '=${stamp}->UTS_RELEASE<-' | ${cpp_cmd} -include ${path} - |") || exit 1;
       LINE: while (<F>) {
         next LINE if(/^#/);
-        if ((my $uts) = /=${stamp}->"(]cr_kern_maj_min_patt[[0-9].*)"<-/o) {
+        if ((my $uts) = /=${stamp}->"(]cr_kern_maj_min_perl[[0-9].*)"<-/o) {
           print "$uts\n";
           exit 0;
         }
@@ -269,11 +273,15 @@ _EOF_
 # Check if the indicated DIR contains version.h.
 # Sets $VAR to the full UTS_RELEASE string, or an error string
 AC_DEFUN([_CR_CHECK_VERSION_H],[
-  if test -r $1/include/linux/version.h; then
+  for cr_version_h in $1/include/linux/version.h $1/include/generated/uapi/linux/version.h none; do
+    test -r $cr_version_h && break
+  done
+  if test $cr_version_h = none; then
+    [$2]='version.h missing'
+  else
     [$2]=`_CR_EXTRACT_UTS_VERSION($1, [$KCC -E -I$1/include -D__KERNEL__ -DMODULE $CR_KTYPE_CPPFLAGS $CPPFLAGS])`
     test $? = 0 || [$2]='no UTS_RELEASE could be extracted'
-  else
-    [$2]='include/linux/version.h missing'
+    AC_SUBST([LINUX_VERSION_H],[$cr_version_h])
   fi
 ])
 
@@ -292,18 +300,25 @@ AC_DEFUN([_CR_CHECK_LINUX_SRC],[
   AC_CACHE_VAL([${cr_cvname}],[
     cr_tmp=''
     if test -e "[$2]/Makefile"; then
-      # First try "asking" the Makefile
-      # If a .config does not exist, then make may complain if/when the main Makefile
-      # tries to include it.  The -k and 2>/dev/null take care of that.
-      cr_tmp=`(make -k echo_kver --no-print-directory -C $2 -f - 2>/dev/null | grep '^cr_kern_maj_min_patt') <<'_EOF_'
+      # First try using version.h, as some distros play odd games w/ the Makefile
+      _CR_CHECK_VERSION_H([$2],cr_tmp)
+      # Now trim EXTRAVERSION, or yield empty if no pattern match
+      cr_tmp=`echo $cr_tmp | sed -n -e '/^\(cr_kern_maj_min_patt[[0-9]]\+\).*$/ {s//\1/p;q;}'`
+
+      # Next try "asking" the Makefile
+      if test -z "$cr_tmp"; then
+        # If a dependency does not exist, then make may complain.
+        # The -k and 2>/dev/null take care of that.
+        cr_tmp=`(make -k echo_kver --no-print-directory -C $2 -f - 2>/dev/null | grep '^cr_kern_maj_min_patt') <<'_EOF_'
 echo_kver:
 	@echo '$(VERSION).$(PATCHLEVEL).$(SUBLEVEL)'
 
 include Makefile
 _EOF_`
-      expr "$cr_tmp" : 'cr_kern_maj_min_patt' >/dev/null || cr_tmp='' # Reject if not matched to pattern
+        expr "$cr_tmp" : 'cr_kern_maj_min_patt' >/dev/null || cr_tmp='' # Reject if not matched to pattern
+      fi
 
-      # Second try grepping the Makefile
+      # Finally try grepping the Makefile
       if test -z "$cr_tmp"; then
         # Note the use of [] for m4 quoting, since the pattern contains [ and ]
         cr_linux_ver1=[`sed -n -e '/^VERSION[ \t]*=[ \t]*\([0-9]\+\).*$/ {s//\1/p;q;}' "$2/Makefile"`]
@@ -311,13 +326,6 @@ _EOF_`
         cr_linux_ver3=[`sed -n -e '/^SUBLEVEL[ \t]*=[ \t]*\([0-9]\+\).*$/ {s//\1/p;q;}' "$2/Makefile"`]
         cr_tmp="${cr_linux_ver1}.${cr_linux_ver2}.${cr_linux_ver3}"
         expr "$cr_tmp" : 'cr_kern_maj_min_patt' >/dev/null || cr_tmp='' # Reject if not matched to pattern
-      fi
-
-      # ONLY if we found something but without SUBLEVEL, then use version.h to get it.
-      if expr "$cr_tmp" : 'cr_kern_maj_min_patt[]$' >/dev/null; then
-        _CR_CHECK_VERSION_H([$2],cr_tmp)
-        # Now trim EXTRAVERSION, or yield empty if no pattern match
-        cr_tmp=`echo $cr_tmp | sed -n -e '/^\(cr_kern_maj_min_patt[[0-9]]\+\).*$/ {s//\1/p;q;}'`
       fi
 
       test -n "$cr_tmp" || cr_tmp='not found'
@@ -338,7 +346,7 @@ _EOF_`
   fi
   # Check that version is acceptible (exact match, or a prefix with the next char non-numeric)
   case "$cr_linux_obj_ver" in
-    [${cr_result}|${cr_result}[^0-9]*])      # the outer [] is m4 quoting
+    [${cr_result}|${cr_result}[!0-9]*])      # the outer [] is m4 quoting
         cr_linux_src_ver="$cr_result";;
     *)  cr_linux_src_ver='';;
   esac
@@ -361,6 +369,7 @@ AC_DEFUN([CR_FIND_LINUX_SRC],[
     cr_list="${LINUX_OBJ} \
 	     /lib/modules/[$1]/source \
 	     /usr/src/linux-[$1] \
+	     /usr/src/linux-headers-[$1] \
 	     /usr/src/kernels/[$1]"
   fi
   for cr_linux_dir in $cr_list; do
@@ -438,6 +447,7 @@ AC_DEFUN([CR_FIND_LINUX_OBJ],[
 			/lib/modules/${cr_tmp_ver}/build \
 			/usr/src/linux-${cr_tmp_ver}-obj \
 			/usr/src/linux-${cr_tmp_ver} \
+			/usr/src/linux-headers-${cr_tmp_ver} \
 	     		/usr/src/kernels/${cr_tmp_ver} \
 			; do
       _CR_CHECK_LINUX_OBJ([${cr_ver_patt}],[${cr_linux_dir}])
@@ -456,7 +466,7 @@ AC_DEFUN([CR_FIND_LINUX_OBJ],[
 # ------------------------------------------------------
 # Check for Linux source and build dirs.
 # Sets LINUX_SRC, LINUX_OBJ and LINUX_VER accordingly.
-# Also sets HAVE_LINUX_2_6 on success
+# Also sets HAVE_LINUX_2_6 or HAVE_LINUX_3 on success
 AC_DEFUN([CR_CHECK_LINUX],[
   AC_SUBST([LINUX_SRC])
   AC_SUBST([LINUX_OBJ])
@@ -468,6 +478,7 @@ AC_DEFUN([CR_CHECK_LINUX],[
   CR_IF([test -n "$cr_linux_src_ver" -a -n "$cr_linux_obj_ver"],[
     case "$cr_linux_obj_ver" in
       2.6.*) HAVE_LINUX_2_6=yes;;
+      3.*.*) HAVE_LINUX_3=yes;;
     esac
     LINUX_VER="$cr_linux_obj_ver"
     CR_KERNEL=`echo $cr_linux_obj_ver | tr - _`
@@ -497,7 +508,7 @@ AC_DEFUN([CR_CHECK_KBUILD],[
       cr_cvname="${cr_cvname} V=1"
     fi
     if test x$cross_compiling = xyes; then
-      cr_cvname="$cr_cvname ARCH=$CR_ARCH CROSS_COMPILE=$host_alias-"
+      cr_cvname="$cr_cvname ARCH=$CR_KARCH CROSS_COMPILE=$host_alias-"
     fi
   ])
   KBUILD_MAKE_ARGS="$cr_cvname"
@@ -568,7 +579,6 @@ AC_DEFUN([CR_SET_KCFLAGS],[
 	/*/conftest.c) continue;;
 	-Wp,-MD,*) continue;;
 	-Wp,-MMD,*) continue;;
-	-O[[1-9]]) continue;;
 	-I/*) ;;
 	-I*) arg=`echo $arg | [sed -e "s:-I:-I${LINUX_OBJ}/:"]`;;
       esac
@@ -577,6 +587,14 @@ AC_DEFUN([CR_SET_KCFLAGS],[
   done])
   KCFLAGS="$cr_cvname"
   popdef([cr_cvname])[]dnl
+  AC_MSG_CHECKING([if autoconf.h or kconfig.h is included implicitly])
+  if echo "$KCFLAGS" | grep -e 'include [[^ ]]*/autoconf\.h' -e 'include [[^ ]]*/kconfig\.h' >/dev/null 2>&1; then
+    AC_MSG_RESULT([yes]);
+  else
+    AC_MSG_RESULT([no]);
+    AC_DEFINE([CR_NEED_AUTOCONF_H], [1])
+    AH_TEMPLATE([CR_NEED_AUTOCONF_H], [Define to 1 if linux/autoconf.h must be included explicitly])
+  fi
   # Do these init steps early, in case first CR_FIND_KSYM is a conditional call
   AC_REQUIRE([_CR_KSYM_INIT_PATTS])
   AC_REQUIRE([_CR_KSYM_INIT_FILES])
@@ -953,8 +971,9 @@ AC_DEFUN([CR_BAD_KERNEL],[
 # When complete sets LINUX_SYMTAB_CMD such that
 # "eval $LINUX_SYMTAB_CMD" will produce a System.map on stdout.
 cr_stripped_maps=''
+m4_define([cr_ksymtab_patt],[[-e '[TD] sys_open' -e '[AB] _end']])
 AC_DEFUN([_CR_CHECK_SYSTEM_MAP],[
-  if test -n "$1" -a -r "$1" && grep ' [[AB]] _end' <"$1" >/dev/null 2>/dev/null; then
+  if test -n "$1" -a -r "$1" && grep cr_ksymtab_patt <"$1" >/dev/null 2>/dev/null; then
     if grep -B1 '[[AB]] _end' <"$1" | grep _stext >/dev/null 2>/dev/null; then
       # Reject "stripped" files (such as in FC2)
       # Recognized (poorly) by _stext and _end as last two entries.
@@ -968,7 +987,7 @@ AC_DEFUN([_CR_CHECK_SYSTEM_MAP],[
 ])
 AC_DEFUN([_CR_CHECK_VMLINUX],[
   AC_REQUIRE([AC_PROG_NM])
-  if test -n "$1" -a -r "$1" && ($NM "$1" | grep ' [[AB]] _end') >/dev/null 2>/dev/null; then
+  if test -n "$1" -a -r "$1" && ($NM "$1" | grep cr_ksymtab_patt) >/dev/null 2>/dev/null; then
     LINUX_VMLINUX="$1"
     LINUX_SYMTAB_FILE="$1"
     LINUX_SYMTAB_CMD="$NM $1 2>/dev/null"
@@ -1041,11 +1060,16 @@ AC_DEFUN([CR_LINUX_SYMTAB],[
     CR_SET_CACHE_VAR([LINUX_VMLINUX])
     CR_CACHE_REVALIDATE([${LINUX_SYMTAB_FILE}],[ksymtab],[kernel symbol table])
   fi
-  # Now check for consistency w/ the kernel source
-  # XXX: Currently just check SMPness. Can this be more aggressive?
+])
+
+# Now check for SYMTAB consistency w/ the kernel source
+# XXX: Currently just check SMPness. Can this be more aggressive?
+AC_DEFUN([CR_LINUX_SYMTAB_VALIDATE],[
   AC_MSG_CHECKING([for SMP kernel source])
   CR_CACHED_KERNEL_COMPILE([smp_source],[
-	#include <linux/autoconf.h>
+	#ifdef CR_NEED_AUTOCONF_H
+	  #include <linux/autoconf.h>
+	#endif
 	#ifndef CONFIG_SMP
 	    choke me
 	#endif
@@ -1054,7 +1078,7 @@ AC_DEFUN([CR_LINUX_SYMTAB],[
   cr_kernel_smp=$cr_result
   AC_MSG_CHECKING([for SMP kernel symbol table])
   cr_symtab_smp=no
-  if test -n "`eval $LINUX_SYMTAB_CMD | grep del_timer_sync 2>/dev/null`"; then
+  if test -n "`eval $LINUX_SYMTAB_CMD | grep del_timer_sync 2>/dev/null | grep -v try_to_del_`"; then
     cr_symtab_smp=yes
   fi
   AC_MSG_RESULT([$cr_symtab_smp]);
@@ -1071,13 +1095,13 @@ AC_DEFUN([CR_LINUX_SYMTAB],[
 # ------------------------------------------------------
 # Helpers for CR_FIND_KSYM() and CR_FIND_EXPORTED_KSYM()
 AC_DEFUN([_CR_KSYM_INIT_PATTS],[
-  case "$CR_ARCH" in
+  case "$CR_KARCH" in
     ppc64)
-      CR_KSYM_PATTERN_DATA=['[bBdDrRtT] ']
+      CR_KSYM_PATTERN_DATA=['[bBdDgGrRsStTvV] ']
       CR_KSYM_PATTERN_CODE=['[dD] ']   dnl Function descriptor is data
       ;;
     *)
-      CR_KSYM_PATTERN_DATA=['[bBdDrRtT] ']
+      CR_KSYM_PATTERN_DATA=['[bBdDgGrRsStTvV] ']
       CR_KSYM_PATTERN_CODE=['[tT] ']
       ;;
   esac
@@ -1097,6 +1121,25 @@ AC_DEFUN([_CR_FIND_KSYM],[dnl
 pushdef([cr_pattern],[${CR_KSYM_PATTERN_$2}$1$])dnl
 `eval $LINUX_SYMTAB_CMD | sed -n -e "/cr_pattern/ {s/ .*//p;q;}"`[]dnl
 popdef([cr_pattern])dnl
+])
+
+# CR_KSYM_FIXUP(NAME,TYPE)
+# The System.map for ARM THUMB2 kernels does not currently
+# include the lowest-bit-must-be-set on function pointers.
+# This helps us fix that up at configure time, using a bitwise-OR as
+# insurance against the possibility the bit IS set in later kernels.
+#
+# It also is a hook for any similar problems in the future.
+AC_DEFUN([CR_KSYM_FIXUP],[
+  if test "[$2]${HAVE_CONFIG_THUMB2_KERNEL}" = 'CODE1'; then
+    [$1]=`$PERL -e "printf '%x', 1 | hex '$[$1]';"`
+  fi
+])
+# Helper to collect data used by CR_KSYM_FIXUP
+AC_DEFUN([_CR_KSYM_FIXUP],[
+  if test "$CR_ARCH" = 'arm'; then
+    CR_CHECK_KERNEL_MACRO([CONFIG_THUMB2_KERNEL])
+  fi
 ])
 
 # CR_FIND_KSYM(SYMBOL,TYPE,[DECL])
@@ -1119,6 +1162,8 @@ popdef([cr_pattern])dnl
 # On return, cr_addr is set (or empty) the same way.
 AC_DEFUN([CR_FIND_KSYM],[
   AC_REQUIRE([CR_LINUX_SYMTAB])
+  AC_REQUIRE([_CR_KSYM_FIXUP])
+  AC_REQUIRE([_CR_KSYM_INIT_PATTS])
   AC_MSG_CHECKING([[kernel symbol table for $1]])
   # Our cacheval is encoded with 'Y' or 'N' as the first char to indicate
   # if a declaration was found or not, and the address or 0 as the rest.
@@ -1128,6 +1173,8 @@ AC_DEFUN([CR_FIND_KSYM],[
     if test -n "$cr_cvname"; then
       if eval $LINUX_SYMTAB_CMD | grep " __ksymtab_$1\$" >/dev/null ; then
         cr_cvname=0
+      else
+        CR_KSYM_FIXUP(cr_cvname,[$2])
       fi
       CR_TRY_KERNEL_COMPILE([
 		#define IN_CONFIGURE 1
@@ -1169,6 +1216,7 @@ _EOF
 # If not found, cr_addr will be 0 on return.
 AC_DEFUN([CR_FIND_EXPORTED_KSYM],[
   AC_REQUIRE([CR_LINUX_SYMTAB])
+  AC_REQUIRE([_CR_KSYM_FIXUP])
   AC_REQUIRE([_CR_KSYM_INIT_PATTS])
   AC_MSG_CHECKING([[kernel symbol table for exported $1]])
   pushdef([cr_cvname],cr_cv_ksymtab_exp_[$1])[]dnl
@@ -1180,6 +1228,7 @@ AC_DEFUN([CR_FIND_EXPORTED_KSYM],[
       cr_cvname=''
     fi])
   if test -n "$cr_cvname"; then
+    CR_KSYM_FIXUP(cr_cvname,[$2])
     cr_result="$cr_cvname"
     cr_addr="0x$cr_cvname"
     AC_DEFINE_UNQUOTED(CR_EXPORTED_K[$2]_[$1],$cr_addr,
@@ -1248,8 +1297,10 @@ AC_DEFUN([CR_CHECK_KMALLOC_MAX],[
   pushdef([cr_cvname],cr_cv_kconfig_kmalloc_max)[]dnl
   AC_CACHE_CHECK([[kernel for maximum kmalloc() allocation]],cr_cvname,[
     cr_kmalloc_default="131072 (default)"
+    cr_header="${LINUX_OBJ}/include/generated/autoconf.h"
+    test -e "$cr_header" || cr_header="${LINUX_OBJ}/include/linux/autoconf.h"
     cr_cvname=`eval "$CPP $CPPFLAGS -I${LINUX_OBJ}/include \
-			-include ${LINUX_OBJ}/include/linux/autoconf.h\
+			-include ${cr_header} \
 			${LINUX_OBJ}/include/linux/kmalloc_sizes.h" 2>/dev/null | \
 		$PERL -n -e 'BEGIN {$max=0;}' \
 			 -e ['if (/CACHE\s*\(\s*([0-9]+)\s*\)/ && ($][1 > $max)) { $max = $][1; }'] \
@@ -1279,13 +1330,13 @@ AC_DEFUN([CR_CROSS_VAR],[
 # Compute a constant (ulong) C expression, even when cross compiling
 AC_DEFUN([CR_COMPUTE_INT],[
   pushdef([cr_cvname],cr_cv_compute_int_[$1])[]dnl
-  AC_CACHE_CHECK([[for value of $1]],cr_cvname,[
-    cr_cvname=""
+  AC_CACHE_CHECK([[for value for $1]],cr_cvname,[
+    cr_cvname="not found"
     m4_ifdef([AC_COMPUTE_INT],
 	[AC_COMPUTE_INT([cr_cvname], [$2], [$3])],
 	[_AC_COMPUTE_INT([$2], [cr_cvname], [$3])])
   ])
-  if test -n "$cr_cvname"; then
+  if test "$cr_cvname" != "not found"; then
     [$1]="$cr_cvname"
   fi
   popdef([cr_cvname])[]dnl
@@ -1298,6 +1349,53 @@ AC_DEFUN([CR_DEFINE_INT],[
   pushdef([cr_varname],[$1])[]dnl
   cr_varname=""
   CR_COMPUTE_INT(cr_varname,[$2],[$3])
+  if test -n "$cr_varname"; then
+    AC_DEFINE_UNQUOTED(cr_varname, $cr_varname)
+    AH_TEMPLATE(cr_varname,m4_default([$4], [[Computed value of '$2']]))
+  fi
+  popdef([cr_varname])[]dnl
+])
+
+# CR_COMPUTE_KERNEL_INT(VAR,EXPRESSION,[INCLUDES])
+# ------------------------------------------------------
+# Compute a constant (ulong) C expression, even when cross compiling, using 
+# the kernel compilation environment.  I had to kludge this to get it to work
+# by setting the cross_compiling flag to yes.  Otherwise, the program that
+# autoconf builds tries to use stdio calls, and the test fails.
+#
+# By setting this flag, autoconf uses _AC_COMPUTE_INT_RUN to evaluate the
+# expression, rather than _AC_COMPUTE_INT_COMPILE, which uses stdio by default.
+AC_DEFUN([CR_COMPUTE_KERNEL_INT],[
+  AC_REQUIRE([CR_SET_KCFLAGS])
+  pushdef([cr_cvname],cr_cv_compute_kernel_int_[$1])[]dnl
+  SAVE_CPP=$CPP
+  SAVE_CPPFLAGS=$CPPFLAGS
+  SAVE_cross_compiling="$cross_compiling"
+  CPP="$KCC -E"
+  CPPFLAGS="$KCFLAGS"
+  cross_compiling="yes"
+  AC_CACHE_CHECK([[kernel for value for $1]],cr_cvname,[
+    cr_cvname="not found"
+    m4_ifdef([AC_COMPUTE_INT],
+	[AC_COMPUTE_INT([cr_cvname], [$2], [$3])],
+	[_AC_COMPUTE_INT([$2], [cr_cvname], [$3])])
+  ])
+  CPP=$SAVE_CPP
+  CPPFLAGS=$SAVE_CPPFLAGS
+  cross_compiling="$SAVE_cross_compiling"
+  if test "$cr_cvname" != "not found"; then
+    [$1]="$cr_cvname"
+  fi
+  popdef([cr_cvname])[]dnl
+])
+
+# CR_DEFINE_KERNEL_INT(VAR,EXPRESSION,[INCLUDES],[TEMPLATE_TEXT])
+# ------------------------------------------------------
+# Like CR_COMPUTE_KERNEL_INT, but also doing AC_DEFINE
+AC_DEFUN([CR_DEFINE_KERNEL_INT],[
+  pushdef([cr_varname],[$1])[]dnl
+  cr_varname=""
+  CR_COMPUTE_KERNEL_INT(cr_varname,[$2],[$3])
   if test -n "$cr_varname"; then
     AC_DEFINE_UNQUOTED(cr_varname, $cr_varname)
     AH_TEMPLATE(cr_varname,m4_default([$4], [[Computed value of '$2']]))

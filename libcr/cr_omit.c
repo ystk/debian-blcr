@@ -21,7 +21,7 @@
  * License along with this library; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
- * $Id: cr_omit.c,v 1.12 2008/09/05 21:01:19 phargrov Exp $
+ * $Id: cr_omit.c,v 1.12.8.1 2011/08/03 19:24:28 eroman Exp $
  *
  * This file builds the "libcr_omit" target library.
  */
@@ -44,6 +44,7 @@
 
 #ifdef LIBCR_SIGNAL_ONLY
   /* Initialization logic. */
+  #define CR_BUILDING_OMIT
   #include "cr_libinit.c"
 #endif /* LIBCR_SIGNAL_ONLY */
 

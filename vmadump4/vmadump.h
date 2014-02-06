@@ -17,7 +17,7 @@
  *  along with this program; if not, write to the Free Software
  *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
- * $Id: vmadump.h,v 1.47 2008/12/15 22:55:24 phargrov Exp $
+ * $Id: vmadump.h,v 1.47.4.2 2012/12/18 18:32:09 phargrov Exp $
  *
  *  THIS VERSION MODIFIED FOR BLCR <http://ftg.lbl.gov/checkpoint>
  *-----------------------------------------------------------------------*/
@@ -39,7 +39,7 @@ struct vmadump_vma_header {
     unsigned long  end;
     unsigned long  flags;
     unsigned long  namelen;	/* 0 = data follows */
-    unsigned long  offset;	/* file offset for mmap */
+    unsigned long  pgoff;	/* file offset for mmap, in page units */
 };
 
 struct vmadump_page_header {
@@ -193,6 +193,9 @@ extern loff_t vmadump_freeze_proc(cr_chkpt_proc_req_t *, struct file *file,
 				  struct pt_regs *regs, int flags);
 extern long vmadump_thaw_proc  (cr_rstrt_proc_req_t *, struct file *file,
 				struct pt_regs *regs, int flags);
+
+extern long vmad_remap(cr_rstrt_proc_req_t *ctx, unsigned long from_addr,
+		       unsigned long to_addr, unsigned long len);
 
 #if 0 /* Neither used nor maintened in BLCR */
 extern long do_vmadump         (long op, long arg0, long arg1, struct pt_regs *regs);

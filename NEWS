@@ -1,6 +1,62 @@
 This file lists the significant user-visible changes between releases
 of BLCR, including main features and bug fixes.
 
+0.8.5
+-----------
+January 29, 2013
+Bug fix and expanded-support release.
+ - This release fixes the following user-visible bugs and "issues"
+   + This release adds support for "vanilla" Linux kernels up to 3.7.x
+   + Fixes "vdso remap failed" errors on x86 platforms.
+   + Fixes support for Xeon Phi
+   + Fixes support for ARMv7 CPUs and for ARM THUMB2 kernels
+   + Fixes to work with more recent autotools, glibc, rpmbuild, etc...
+   + Fixes for memory regions larger than 4G
+   + Numerous other minor bugs
+ - RPM packaging improvements
+   + Now supports "rpmbuild --define 'with_multilib 0' ..." to disable
+     building of 32-bit libs on 64-bit targets.
+   + "make rpms" now works correctly when run in non-English locales
+ - This release is known NOT to work with 3.8.x kernels
+
+0.8.4
+-----------
+October 11, 2011
+Bug fix and expanded-support release.
+ - This release fixes the following user-visible bugs and "issues"
+   + This release adds support for "vanilla" Linux kernels up to 2.6.38.
+   + This release adds support for recent RHEL5 kernels.
+   + Occasional "random" failures on x86 have been identified and fixed.
+
+0.8.3
+-----------
+August 15, 2011
+Bug fix and expanded-support release.
+ - This release fixes the following user-visible bugs and "issues"
+   + More options for dealing with BLCR-vs-NSCD conflicts.  See the BLCR
+     FAQ entry 'Why do I get "vmadump: mmap failed: /var/db/nscd/[something]"
+     in the system logs?' for a list of one's options.
+   + This release adds support for "vanilla" Linux kernels up to 2.6.34.
+   + bug 2594 - dpipe.ct and forward.ct fail "while restoring external pipe"
+ - This release has known issues some RHEL5-derived kernels.  Specifically,
+   + auditing cr_restart can cause a kernel BUG() message to be issued
+   + the vdso page is misidentified during restart of 32-bit
+     processes on x86_64 kernels.  You'll see the following error:
+     do_mmap(0, ffffe000, 00001000, ...) = 0xfffffffffffffff4 (failed)
+   + --save-all is not supported for restart of 32-bit processes on x86_64
+     kernels.  If you try to restore such a process, you'll see cr_restart
+     will fail with the error:
+     Failed to locate newborn mmap()ed space
+   A patch for the RHEL5 kernels that addresses these issues is available on 
+   the web site:
+   https://upc-bugs.lbl.gov/blcr-dist/blcr-0.8.3+kernel-2.6.18.el5.patch01
+   We haven't fully tested the rhel5 patch on non-el5 kernels (that's why it's 
+   not in the release), so we recommend you apply the RHEL5 patch ONLY if you
+   are running a 2.6.18 el5 kernel.
+
+The next release, BLCR 0.8.4, will merge support for RHEL5 kernels, and add
+support for 2.6.35 kernels.
+
 0.8.2
 -----------
 June 16, 2009

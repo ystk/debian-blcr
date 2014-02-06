@@ -21,7 +21,7 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
- * $Id: cr_objects.c,v 1.11 2008/08/21 05:22:49 phargrov Exp $
+ * $Id: cr_objects.c,v 1.11.8.1 2012/12/25 03:27:28 phargrov Exp $
  */
 
 #include "cr_module.h"
@@ -50,9 +50,9 @@ static cr_kmem_cache_ptr cr_object_cachep = NULL;
 int
 cr_object_init(void)
 {
-	cr_objmap_cachep = KMEM_CACHE(cr_objectmap_s, 0);
+	cr_objmap_cachep = CR_KMEM_CACHE(cr_objectmap_s);
 	if (!cr_objmap_cachep) goto no_objmap_cachep;
-	cr_object_cachep = KMEM_CACHE(cr_objectmap_pair, 0);
+	cr_object_cachep = CR_KMEM_CACHE(cr_objectmap_pair);
 	if (!cr_object_cachep) goto no_object_cachep;
 	return 0;
 

@@ -21,7 +21,7 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
- * $Id: cr_pipes.c,v 1.225.8.2 2009/06/12 20:37:03 phargrov Exp $
+ * $Id: cr_pipes.c,v 1.225.8.9 2013/01/04 04:21:24 phargrov Exp $
  */
 
 #include "cr_module.h"
@@ -29,12 +29,22 @@
 
 #include <linux/pipe_fs_i.h>
 
-#if !HAVE_PIPE_INODE_INFO_BASE && ((PIPE_BUFFERS * PAGE_SIZE) > CR_KMALLOC_MAX)
-  #define CR_ALLOC_PIPEBUF(_sz)	vmalloc(_sz)
-  #define CR_FREE_PIPEBUF(_buf)	vfree(_buf)
+
+#if HAVE_PIPE_INODE_INFO_BASE
+  #define CR_ALLOC_PIPEBUF(_sz) kmalloc((_sz),GFP_KERNEL)
+  #define CR_FREE_PIPEBUF(_buf) kfree(_buf)
 #else
-  #define CR_ALLOC_PIPEBUF(_sz)	kmalloc((_sz),GFP_KERNEL)
-  #define CR_FREE_PIPEBUF(_buf)	kfree(_buf)
+  #define CR_ALLOC_PIPEBUF(_sz) vmalloc(_sz)
+  #define CR_FREE_PIPEBUF(_buf) vfree(_buf)
+  #if HAVE_PIPE_INODE_INFO_BUFFERS
+    static __inline__ unsigned int cr_pipe_buffers(struct pipe_inode_info *p) {
+      return p->buffers;
+    }
+  #else
+    static __inline__ unsigned int cr_pipe_buffers(struct pipe_inode_info *p) {
+      return PIPE_BUFFERS;
+    }
+  #endif
 #endif
 
 #if HAVE_INODE_SEM
@@ -71,7 +81,7 @@ cr_posix_flags_to_f_mode(int posix_flags)
  * ensures the second will not block for lack of readers or writers.
  */
 static int
-cr_open_named_fifo(cr_errbuf_t *eb, int fd, struct dentry *dentry, struct vfsmount *mnt, int flags)
+cr_open_named_fifo(cr_errbuf_t *eb, int fd, struct path *path, int flags)
 {
     int retval = 0;
     struct file *filp, *rw_filp;
@@ -82,11 +92,8 @@ cr_open_named_fifo(cr_errbuf_t *eb, int fd, struct dentry *dentry, struct vfsmou
      * know this "extra" RDWR open will work regardless of true access rights.
      * THIS IS ALSO WHY WE MUST CLOSE rw_filp WHEN DONE WITH IT.
      */
-  #if HAVE_TASK_CRED
-    rw_filp = dentry_open(dget(dentry), mntget(mnt), O_RDWR, cr_current_cred());
-  #else
-    rw_filp = dentry_open(dget(dentry), mntget(mnt), O_RDWR);
-  #endif
+    path_get(path);
+    rw_filp = cr_dentry_open(path, O_RDWR);
     retval = PTR_ERR(rw_filp);
     if (IS_ERR(rw_filp)) goto out;
 	
@@ -163,7 +170,12 @@ cr_couple_named_fifo(cr_rstrt_req_t *req, struct cr_file_info *file_info,
 	retval = -EIO;
 	goto out_dput;
     }
-    retval = cr_open_named_fifo(eb, file_info->fd, new_dentry, mnt, cf_fifo->fifo_flags);
+    {
+	struct path path;
+	path.dentry = new_dentry;
+	path.mnt = mnt;
+	retval = cr_open_named_fifo(eb, file_info->fd, &path, cf_fifo->fifo_flags);
+    }
 
 out_dput:
     dput(new_dentry);
@@ -174,7 +186,7 @@ out:
 /* Set up a new file pointer to an existing pipe */
 static int
 cr_couple_unnamed_pipe(cr_rstrt_req_t *req, struct cr_file_info *file_info, 
-	struct cr_fifo *cf_fifo, const struct file *first_filp)
+	struct cr_fifo *cf_fifo, struct file *first_filp)
 {
     int retval;
     struct file *filp;
@@ -214,29 +226,26 @@ cr_creat_named_fifo(cr_errbuf_t *eb, struct cr_file_info *file_info,
 		    const struct cr_fifo *cf_fifo, const char *name)
 {
     int retval;
-    struct nameidata nd;
-    struct dentry * dentry;
+    struct path path;
 
     /* make a new FIFO, or find the existing one */
-    dentry = cr_mknod(eb, &nd, name, cf_fifo->fifo_perms, file_info->unlinked ? file_info->fd+1 : 0);
-    if (IS_ERR(dentry)) {
-	retval = PTR_ERR(dentry);
+    retval = cr_mknod(eb, &path, name, cf_fifo->fifo_perms, file_info->unlinked ? file_info->fd+1 : 0);
+    if (retval) {
 	CR_ERR_EB(eb, "Failed to create named fifo %s.  err=%d.", name, retval);
 	goto out;
     }
 
     /* open it */
-    retval = cr_open_named_fifo(eb, file_info->fd, dentry, nd.nd_mnt, cf_fifo->fifo_flags);
+    retval = cr_open_named_fifo(eb, file_info->fd, &path, cf_fifo->fifo_flags);
     if (retval < 0) {
 	CR_ERR_EB(eb, "Couldn't open %s.  err=%d.", name, retval);
-	goto out_dput;
+	goto out_put;
     }
 
     retval = 0;
 
-out_dput:
-    dput(dentry);
-    cr_path_release(&nd);
+out_put:
+    path_put(&path);
 out:
     return retval;
 }
@@ -334,6 +343,12 @@ cr_restore_pipe_buf(cr_errbuf_t *eb, struct file *cf_filp, struct inode *p_inode
 	goto out_up;
     }
 
+    if ((buf_len) > PIPE_SIZE) {
+        /* should never happen */
+        retval = -ENOSPC;
+        goto out_up;
+    }
+
     if (buf_len) {
 	memcpy((void *)PIPE_BASE(*p_inode), buf, buf_len);
         PIPE_LEN(*p_inode) = buf_len;
@@ -350,6 +365,14 @@ cr_restore_pipe_buf(cr_errbuf_t *eb, struct file *cf_filp, struct inode *p_inode
             retval = -EBUSY;
 	    goto out_up;
 	}
+
+        if (buf_len > cr_pipe_buffers(pipe)*PAGE_SIZE) {
+            /* cr_restore_open_fifo should have done this already. */
+            retval = -ENOSPC;
+            goto out_up;
+            /* Do this here instead of calling pipe_fcntl? 
+             * pipe_set_size(pipe, nr_pages); */
+        }
 
 	nrbufs = 0;
 	p = buf;
@@ -485,6 +508,31 @@ out:
     return (err < 0) ? ERR_PTR(err) : p_filp;
 }
 
+#if HAVE_PIPE_FCNTL
+static long cr_pipe_size_init(cr_errbuf_t *eb, struct file *pipe_filp, 
+                              long new_size)
+{
+    static long filp_size;
+
+    /* check the current size */
+    filp_size = pipe_fcntl(pipe_filp, F_GETPIPE_SZ, 0);
+
+    if (filp_size != new_size) {
+        /* resize the thing, this can shrink the pipe, as well as grow it */
+        filp_size = pipe_fcntl(pipe_filp, F_SETPIPE_SZ, new_size);
+
+        if (filp_size < 0) {
+            CR_ERR_EB(eb, "pipe_fcntl: failed with err=%ld", filp_size);
+        } else if (filp_size < new_size) {
+            CR_ERR_EB(eb, "Unable to set pipe size");
+            filp_size = -ENOSPC;
+        }
+    }
+
+    return filp_size;
+}
+#endif
+
 extern int 
 cr_restore_open_fifo(cr_rstrt_proc_req_t *proc_req,
 	struct cr_file_info *file_info, int do_not_restore_flag)
@@ -520,14 +568,31 @@ cr_restore_open_fifo(cr_rstrt_proc_req_t *proc_req,
 	    sys_close(file_info->fd);
 	}
     } else if (!do_not_restore_flag) {
-	/* Deal with a dangling pipe by effectively dup()ing from cr_restart */
-	struct file *old_filp, *filp;
+	/* Deal with a dangling pipe by dup()ing dpipe_{in,out} */
+	struct file *filp;
+	retval = -EBADF;
 	switch (cf_fifo.fifo_flags & O_ACCMODE) {
 	case O_RDONLY:
-	    old_filp = req->cr_restart_stdin;
+	    filp = req->dpipe_in;
+	    if (!filp) {
+		CR_ERR_REQ(req, "No alternate input file when restoring an external pipe");
+		goto out;
+	    }
+	    if (!(filp->f_mode & FMODE_READ)) {
+		CR_ERR_REQ(req, "Alternate input file non-readable when restoring an external pipe");
+		goto out;
+	    }
 	    break;
 	case O_WRONLY:
-	    old_filp = req->cr_restart_stdout;
+	    filp = req->dpipe_out;
+	    if (!filp) {
+		CR_ERR_REQ(req, "No alternate output file when restoring an external pipe");
+		goto out;
+	    }
+	    if (!(filp->f_mode & FMODE_WRITE)) {
+		CR_ERR_REQ(req, "Alternate output file non-writable when restoring an external pipe");
+		goto out;
+	    }
 	    break;
 	default:
 	    CR_ERR_REQ(req, "Invalid access mode %d while restoring external pipe",
@@ -535,12 +600,8 @@ cr_restore_open_fifo(cr_rstrt_proc_req_t *proc_req,
 	    retval = -EINVAL;
 	    goto out;
 	}
-	filp = cr_filp_reopen(old_filp, cf_fifo.fifo_flags);
-	if (IS_ERR(filp)) {
-	    retval = PTR_ERR(filp);
-	    CR_ERR_REQ(req, "Error %d from cr_filp_reopen() while restoring external pipe", retval);
-	    goto out;
-	}
+	CRI_ASSERT(filp != NULL);
+	get_file(filp);
 	retval = cr_fd_claim(file_info->fd);
 	if (retval < 0) {
 	    CR_ERR_REQ(req, "File descriptor %d in use.", file_info->fd);
@@ -578,6 +639,21 @@ cr_restore_open_fifo(cr_rstrt_proc_req_t *proc_req,
         if (IS_ERR(p_filp) || !p_filp) {
             goto out_free;
         }
+
+#if HAVE_PIPE_FCNTL
+        /* resize the pipe buffers while it's still easy. */
+        if (cf_fifo.pipe_sz < cf_fifo.fifo_len) {
+            /* should never ever happen, abort */
+	    CR_ERR_REQ(req, "bad pipe info: (pipe_sz < fifo_len)!");
+            goto out_free;
+        }
+
+        retval = cr_pipe_size_init(eb, p_filp, cf_fifo.pipe_sz);
+        if ((retval < cf_fifo.pipe_sz) || (retval < 0)) {
+	    CR_ERR_REQ(req, "failed to resize pipe buffers");
+            goto out_free;
+        }
+#endif
 
 	/* now read the pipe buffer data, and optionally restore it */
 	retval = cr_restore_pipe_buf(eb, cf_filp, p_filp->f_dentry->d_inode,
@@ -684,6 +760,7 @@ cr_save_open_fifo(cr_chkpt_proc_req_t *proc_req, struct file *filp)
     cf_fifo.fifo_id = inode;
     cf_fifo.fifo_dentry = filp->f_dentry;
     cf_fifo.fifo_len = -1;
+    cf_fifo.pipe_sz = -1;
     cf_fifo.fifo_internal = cr_fifo_is_internal(proc_req->req, inode);
 
     /* Note: cf_fifo.fifo_internal check makes us skip the pipebuf save for external pipes
@@ -712,7 +789,7 @@ cr_save_open_fifo(cr_chkpt_proc_req_t *proc_req, struct file *filp)
 	    int i, curbuf;
 	    char *p;
 
-	    buf = CR_ALLOC_PIPEBUF(PIPE_BUFFERS * PAGE_SIZE);
+	    buf = CR_ALLOC_PIPEBUF(cr_pipe_buffers(pipe)*PAGE_SIZE);
 	    if (!buf) {
 	        retval = -ENOMEM;
 	        cr_pipe_unlock(inode);
@@ -749,8 +826,10 @@ cr_save_open_fifo(cr_chkpt_proc_req_t *proc_req, struct file *filp)
 #endif
 	        p += pbuf->len;
 	        cf_fifo.fifo_len += pbuf->len;
-	        curbuf = (curbuf + 1) & (PIPE_BUFFERS-1);
+	        curbuf = (curbuf + 1) & (cr_pipe_buffers(pipe)-1);
 	    }
+
+
 	}
     #endif
 	cr_pipe_unlock(inode);
@@ -766,6 +845,14 @@ cr_save_open_fifo(cr_chkpt_proc_req_t *proc_req, struct file *filp)
     cf_fifo.fifo_pos = filp->f_pos;
     cf_fifo.fifo_flags = filp->f_flags;
     cf_fifo.fifo_version = filp->f_version;
+
+    /* write out the pipe size, for fcntl(F_SETPIPE_SZ).  Do this without
+     * holding the mutex, since pipe_fcntl tries to acquire it. */
+#if HAVE_PIPE_FCNTL
+    cf_fifo.pipe_sz = pipe_fcntl(filp, F_GETPIPE_SZ, 0);
+#else
+    cf_fifo.pipe_sz = cf_fifo.fifo_len;
+#endif
 
     /* write out fifo structure */
     retval = cr_kwrite(eb, cf_filp, &cf_fifo, sizeof(cf_fifo));

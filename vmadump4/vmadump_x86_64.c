@@ -17,11 +17,13 @@
  *  along with this program; if not, write to the Free Software
  *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
- * $Id: vmadump_x86_64.c,v 1.50.8.1 2009/06/12 20:37:06 phargrov Exp $
+ * $Id: vmadump_x86_64.c,v 1.50.8.8 2013/01/08 07:23:50 phargrov Exp $
  *
  * THIS VERSION MODIFIED FOR BLCR <http://ftg.lbl.gov/checkpoint>
  *-----------------------------------------------------------------------*/
+#ifdef CR_NEED_AUTOCONF_H
 #include <linux/autoconf.h>
+#endif
 #if defined(CONFIG_SMP) && ! defined(__SMP__)
 #define __SMP__
 #endif
@@ -41,12 +43,19 @@
         asm volatile("mov %%" #seg ",%0":"=m" (*(int *)&(value)))
 #endif
 
+#ifndef checking_wrmsrl
+  #define checking_wrmsrl wrmsrl_safe
+#endif
+
 #if HAVE_WRITE_PDA && HAVE_READ_PDA
   #define vmad_write_oldrsp(_val) write_pda(oldrsp, (_val))
   #define vmad_read_oldrsp()      read_pda(oldrsp)
 #elif HAVE_PERCPU_WRITE && HAVE_PERCPU_READ
   #define vmad_write_oldrsp(_val) percpu_write(old_rsp, (_val))
   #define vmad_read_oldrsp()      percpu_read(old_rsp)
+#elif HAVE_THIS_CPU_WRITE && HAVE_THIS_CPU_READ
+  #define vmad_write_oldrsp(_val) this_cpu_write(old_rsp, (_val))
+  #define vmad_read_oldrsp()      this_cpu_read(old_rsp)
 #else
   #error "No access to per-cpu data?"
 #endif
@@ -202,7 +211,7 @@ int vmadump_restore_cpu(cr_rstrt_proc_req_t *ctx, struct file *file,
 	
     /* XXX FIX ME: RESTORE DEBUG INFORMATION ?? */
     /* Here we read it but ignore it. */
-    r = vmadump_restore_debugreg(ctx, file, threadtmp);
+    r = vmadump_restore_debugreg(ctx, file);
     if (r < 0) goto bad_read;
 
     /* user(r)sp, since we don't use the ptrace entry path in BLCR */
@@ -230,8 +239,6 @@ int vmadump_restore_cpu(cr_rstrt_proc_req_t *ctx, struct file *file,
 	goto bad_read;
     }
     current->thread.fs = threadtmp->fs;
-    if ((r = checking_wrmsrl(MSR_FS_BASE, threadtmp->fs)))
-	goto bad_read;
 	
     /* Restore GS_KERNEL_BASE MSR */
     r = read_kern(ctx, file, &threadtmp->gs, sizeof(threadtmp->gs));
@@ -241,8 +248,6 @@ int vmadump_restore_cpu(cr_rstrt_proc_req_t *ctx, struct file *file,
 	goto bad_read;
     }
     current->thread.gs = threadtmp->gs;
-    if ((r = checking_wrmsrl(MSR_KERNEL_GS_BASE, threadtmp->gs)))
-	goto bad_read;
 
     /* Restore 32 bit segment stuff */
     r = read_kern(ctx, file, &fsindex, sizeof(fsindex));
@@ -292,7 +297,14 @@ int vmadump_restore_cpu(cr_rstrt_proc_req_t *ctx, struct file *file,
 
     loadsegment(fs, current->thread.fsindex);
     load_gs_index(current->thread.gsindex);
+
+    r = checking_wrmsrl(MSR_FS_BASE, threadtmp->fs);
+    if (!r) /* preserve first error */
+	r = checking_wrmsrl(MSR_KERNEL_GS_BASE, threadtmp->gs);
     put_cpu();
+
+    if (r)
+	goto bad_read;
 
     /* In case cr_restart and child don't have same ABI */
     if (regtmp->cs == __USER32_CS) {
@@ -340,7 +352,18 @@ int vmadump_restore_cpu(cr_rstrt_proc_req_t *ctx, struct file *file,
 
 int vmad_is_arch_map(const struct vm_area_struct *map)
 {
-	return (map->vm_start == (unsigned long)vmad_vdso_base);
+    unsigned long vdso_base = (unsigned long) vmad_vdso_base;
+
+  #if HAVE_MM_CONTEXT_VDSO && defined(VSYSCALL32_BASE)
+    /* Some RHEL5 kernels use fix the VSYSCALL32_BASE for 32-bit tasks and 
+     * current->mm->context.vdso for 64-bit tasks.  Since we need to
+     * assign to vmad_vdso_base, it isn't convenient to redefine it. */
+     	if (test_thread_flag(TIF_IA32)) { 
+		vdso_base = VSYSCALL32_BASE;
+	} 
+  #endif
+
+	return (map->vm_start == vdso_base);
 }
 EXPORT_SYMBOL_GPL(vmad_is_arch_map);
 
@@ -356,9 +379,12 @@ loff_t vmad_store_arch_map(cr_chkpt_proc_req_t *ctx, struct file *file,
 	head.end     = map->vm_end;
 	head.flags   = map->vm_flags;
 	head.namelen = VMAD_NAMELEN_ARCH;
-	head.offset  = 0;
+	head.pgoff   = 0;
 
+	up_read(&current->mm->mmap_sem);
 	r = write_kern(ctx, file, &head, sizeof(head));
+	down_read(&current->mm->mmap_sem);
+
 	if (r < 0) return r;
 	if (r != sizeof(head)) r = -EIO;
     }
@@ -379,9 +405,12 @@ int vmad_load_arch_map(cr_rstrt_proc_req_t *ctx, struct file *file,
   #if HAVE_MM_CONTEXT_VDSO
     vmad_vdso_base = (void *)(~0UL);
   #endif
+  #if defined(CR_KCODE_syscall32_setup_pages)
     if (test_thread_flag(TIF_IA32)) {
 	r = syscall32_setup_pages(NULL, 0);
-    } else {
+    } else
+  #endif
+    {
   #if HAVE_2_ARG_ARCH_SETUP_ADDITIONAL_PAGES
 	r = arch_setup_additional_pages(NULL, 0);
   #elif HAVE_4_ARG_ARCH_SETUP_ADDITIONAL_PAGES
@@ -401,19 +430,23 @@ int vmad_load_arch_map(cr_rstrt_proc_req_t *ctx, struct file *file,
      */
     if (vmad_vdso_base == (void *)(~0UL)) {
 	/* The call above didn't overwrite mm->context.vdso.
-	 * Since no failure was indicatated we just fill it in.
+	 * Since no failure was indictated we just fill it in.
 	 */
 	vmad_vdso_base = (void *)head->start;
+    #if defined(VSYSCALL32_BASE)
+        /* we probably didn't want to do that. */
+        if (test_thread_flag(TIF_IA32)) {
+            /* this seems to work, is there a better way? */
+            vmad_vdso_base = (void *)(0UL);
+        }
+    #endif
     } else if (vmad_vdso_base != (void *)head->start) {
-	long len = head->end - head->start;
-	unsigned long old_addr = (unsigned long)vmad_vdso_base;
-	unsigned long new_addr = sys_mremap(old_addr, len, len, MREMAP_FIXED|MREMAP_MAYMOVE, head->start);
-	if (new_addr != head->start) {
-	    r = (new_addr & (PAGE_SIZE-1)) ? new_addr : -ENOMEM;
+	r = vmad_remap(ctx, (unsigned long)vmad_vdso_base, head->start, head->end - head->start);
+	if (r) {
 	    CR_ERR_CTX(ctx, "vdso remap failed %d", (int)r);
 	    goto err;
 	}
-	vmad_vdso_base = (void *)new_addr;
+	vmad_vdso_base = (void *)head->start;
     }
   #else
     /* VSYSCALL32_BASE is a fixed value */

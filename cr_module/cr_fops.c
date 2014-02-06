@@ -21,7 +21,7 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
- * $Id: cr_fops.c,v 1.69 2008/08/16 00:17:09 phargrov Exp $
+ * $Id: cr_fops.c,v 1.69.8.4 2012/12/18 18:32:05 phargrov Exp $
  */
 
 #include "cr_module.h"
@@ -127,9 +127,16 @@ out_no_task:
  * the C/R control node.  It acts as a dispatcher to the functions
  * which do the real work.
  */
+#if HAVE_FILE_OPERATIONS_UNLOCKED_IOCTL
+static long ctrl_unlocked_ioctl(struct file *file,
+		                unsigned int op, unsigned long arg)
+#else
 static int ctrl_ioctl(struct inode *inode, struct file *file,
 		      unsigned int op, unsigned long arg)
+#endif
 {
+	int result = -ENOTTY;
+
 	CR_KTRACE_FUNC_ENTRY("op=%08x arg=0x%lx", op, arg);
 
 	switch(op) {
@@ -139,62 +146,79 @@ static int ctrl_ioctl(struct inode *inode, struct file *file,
 	// XXX: When adding cases here, also add to the ioctl32 init/cleanup
 	//      code below and to the big switch in cr_compat.c.
 	case CR_OP_HAND_CHKPT:
-		return cr_dump_self(file, arg);
+		result = cr_dump_self(file, arg);
+		break;
 
 	case CR_OP_HAND_ABORT:
-		return cr_hand_abort(file, arg);
+		result = cr_hand_abort(file, arg);
+		break;
 
 	case CR_OP_HAND_SUSP:
-		return cr_suspend(file, (struct timeval __user *)arg);
+		result = cr_suspend(file, (struct timeval __user *)arg);
+		break;
 
 	case CR_OP_HAND_PHASE1:
-		return cr_phase1_register(file, (int)arg);
+		result = cr_phase1_register(file, (int)arg);
+		break;
 
 	case CR_OP_HAND_PHASE2:
-		return cr_phase2_register(file, (int)arg);
+		result = cr_phase2_register(file, (int)arg);
+		break;
 
 	case CR_OP_HAND_SRC:
-		return cr_rstrt_src(file, (char __user *)arg);
+		result = cr_rstrt_src(file, (char __user *)arg);
+		break;
 
 	case CR_OP_HAND_CHKPT_INFO:
-		return cr_chkpt_info(file, (struct cr_chkpt_info __user *)arg);
+		result = cr_chkpt_info(file, (struct cr_chkpt_info __user *)arg);
+		break;
 
 	case CR_OP_HAND_DONE:
-		return cr_hand_complete(file, arg);
+		result = cr_hand_complete(file, arg);
+		break;
 
 
 	//
 	// Calls from cr_checkpoint:
 	//
 	case CR_OP_CHKPT_REQ:
-		return cr_chkpt_req(file, (struct cr_chkpt_args __user *)arg);
+		result = cr_chkpt_req(file, (struct cr_chkpt_args __user *)arg);
+		break;
 
 	case CR_OP_CHKPT_REAP:
-		return cr_chkpt_reap(file);
+		result = cr_chkpt_reap(file);
+		break;
 
 	case CR_OP_CHKPT_FWD:
-		return cr_chkpt_fwd(file, (struct cr_fwd_args __user *)arg);
+		result = cr_chkpt_fwd(file, (struct cr_fwd_args __user *)arg);
+		break;
 
 	case CR_OP_CHKPT_LOG:
-		return cr_chkpt_log(file, (struct cr_log_args __user *)arg);
+		result = cr_chkpt_log(file, (struct cr_log_args __user *)arg);
+		break;
 
 	//
 	// Calls from cr_restart:
 	//
 	case CR_OP_RSTRT_REQ:
-		return cr_rstrt_request_restart(file, (struct cr_rstrt_args __user *)arg);
+		result = cr_rstrt_request_restart(file, (struct cr_rstrt_args __user *)arg);
+		break;
 
 	case CR_OP_RSTRT_REAP:
-		return cr_rstrt_reap(file);
+		result = cr_rstrt_reap(file);
+		break;
 
 	case CR_OP_RSTRT_CHILD:
-		return cr_rstrt_child(file);
+		result = cr_rstrt_child(file);
+		break;
 
 	case CR_OP_RSTRT_PROCS:
-		return cr_rstrt_procs(file, (struct cr_procs_tbl __user *)arg);
+		result = cr_rstrt_procs(file, (struct cr_procs_tbl __user *)arg);
+		break;
 
 	case CR_OP_RSTRT_LOG:
-		return cr_rstrt_log(file, (struct cr_log_args __user *)arg);
+		result = cr_rstrt_log(file, (struct cr_log_args __user *)arg);
+		break;
 
 	//
 	// General calls
@@ -215,13 +239,15 @@ static int ctrl_ioctl(struct inode *inode, struct file *file,
 		    CR_WARN("request from pid %d for unsupported version %d.%d",
 			    (int)current->pid, (int)major, (int)minor);
 		}
-		return match ? 0 : -CR_EVERSION;
+		result = match ? 0 : -CR_EVERSION;
+		break;
 	    }
 
 	default:
 		CR_KTRACE_BADPARM("unknown op %x", _IOC_NR(op));
-		return -ENOTTY;
 	}
+
+	return result;
 }
 
 static int ctrl_open(struct inode * inode, struct file * file)
@@ -285,7 +311,11 @@ struct file_operations cr_ctrl_fops =
 	owner:		THIS_MODULE,
 	open:		ctrl_open,
 	release:	ctrl_release,
+#if HAVE_FILE_OPERATIONS_UNLOCKED_IOCTL
+	unlocked_ioctl:	ctrl_unlocked_ioctl,
+#else
 	ioctl:		ctrl_ioctl,
+#endif
 	poll:		ctrl_poll,
 #if defined(CONFIG_COMPAT) && defined(HAVE_COMPAT_IOCTL)
 	compat_ioctl:	cr_compat_ctrl_ioctl,

@@ -21,7 +21,7 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
- * $Id: cr_mmaps.c,v 1.36.8.1 2009/03/26 04:22:43 phargrov Exp $
+ * $Id: cr_mmaps.c,v 1.36.8.8 2012/12/23 06:12:05 phargrov Exp $
  *
  * This file handles special memory mappings
  *
@@ -114,12 +114,13 @@ cr_regenerate(cr_rstrt_proc_req_t *proc_req,
     struct file *filp;
     const char *name;
 
-    mode = 0;
+    mode = (desc->flags & VM_MAYSHARE) ? (S_IWUSR | S_IRUSR) : 0;
     if (desc->flags & VM_MAYREAD)  mode |= S_IRUSR;
     if (desc->flags & VM_MAYWRITE) mode |= S_IWUSR;
     if (desc->flags & VM_MAYEXEC)  mode |= S_IXUSR;
 
-    switch (desc->flags & (VM_MAYREAD|VM_MAYWRITE)) {
+    if (desc->flags & VM_MAYSHARE) flags = O_RDWR;
+    else switch (desc->flags & (VM_MAYREAD|VM_MAYWRITE)) {
     case VM_MAYREAD:	 flags = O_RDONLY; break;
     case VM_MAYWRITE:	 flags = O_WRONLY; break;
     default:		 flags = O_RDWR; break;
@@ -171,7 +172,9 @@ cr_load_mmaps_data(cr_rstrt_proc_req_t *proc_req)
         if (desc->flags & VM_WRITE) prot |= PROT_WRITE;
         if (desc->flags & VM_EXEC)  prot |= PROT_EXEC;
         if (desc->flags & VM_GROWSDOWN) flags |= MAP_GROWSDOWN;
+      #ifdef VM_EXECUTABLE
         if (desc->flags & VM_EXECUTABLE) flags |= MAP_EXECUTABLE;
+      #endif
 
 	/* "mmaps_id" was checkpoint-time inode, but we map to the first-restored filp */
         found = cr_find_object(proc_req->req->map, desc->mmaps_id, (void **)&filp);
@@ -192,7 +195,7 @@ cr_load_mmaps_data(cr_rstrt_proc_req_t *proc_req)
 
 	    /* mmap() at offset 0, even if it needs to move later */
 	    down_write(&mm->mmap_sem);
-	    map_addr = do_mmap(NULL, desc->start, len, mmap_prot, flags, 0);
+	    map_addr = cr_mmap_pgoff(NULL, desc->start, len, mmap_prot, flags, 0);
             map = find_vma(mm, desc->start);
 	    filp = (map && (map->vm_start == desc->start)) ? map->vm_file : NULL;
 	    up_write(&mm->mmap_sem);
@@ -213,7 +216,7 @@ cr_load_mmaps_data(cr_rstrt_proc_req_t *proc_req)
 	}
 
         down_write(&mm->mmap_sem);
-	map_addr = do_mmap(filp, desc->start, len, prot|PROT_WRITE, flags, (desc->pgoff << PAGE_SHIFT));
+	map_addr = cr_mmap_pgoff(filp, desc->start, len, prot|PROT_WRITE, flags, desc->pgoff);
 	up_write(&mm->mmap_sem);
 
         if (!found) {
@@ -224,7 +227,11 @@ cr_load_mmaps_data(cr_rstrt_proc_req_t *proc_req)
 	if (!filp || (map_addr != desc->start)) {
 fail:
 	    CR_ERR_PROC_REQ(proc_req, "Failed to locate newborn mmap()ed space");
-	    retval = -EINVAL;
+            if ((map_addr != desc->start) && IS_ERR((void *) map_addr)) {
+                retval = map_addr;
+            } else {
+               retval = -EINVAL;
+            }
 	    goto err;
 	}
     }
@@ -265,17 +272,27 @@ cr_save_mmaps_maps(cr_chkpt_proc_req_t *proc_req)
     cr_errbuf_t *eb = proc_req->req->errbuf;
     int flags = proc_req->req->flags;
     struct mm_struct *mm = current->mm;
-    struct vm_area_struct *map;
+    struct vm_area_struct *map, *next_map;
     struct cr_mmaps_desc *desc_tbl = NULL;
     struct file **file_tbl = NULL;
+    unsigned long next_addr;
     size_t size = 0;
     int i, count = 0;
     int retval;
 
     down_read(&mm->mmap_sem);
     /* First pass just counts maps ... */
-    for (map = mm->mmap; map ; map = map->vm_next) {
+    next_map = mm->mmap;
+    next_addr = next_map ? next_map->vm_start : 0;
+    while (next_map) {
+	/* Some contortions here to allow us to release mmap_sem */
+	map = find_vma(mm, next_addr);
+	if (map != next_map) break; /* Should this be an error? */
+	next_map = map->vm_next;
+	next_addr = next_map ? next_map->vm_start : 0;
 	if (!map->vm_file) continue;
+	up_read(&mm->mmap_sem);
+
 	/* Ensure up-to-date inode information (e.g. on a network fs) */
 	retval = cr_fstat(proc_req->req->map, map->vm_file);
 	if (retval) {
@@ -283,6 +300,8 @@ cr_save_mmaps_maps(cr_chkpt_proc_req_t *proc_req)
 	    goto err;
 	}
 	count += !!vmad_is_special_mmap(map, flags);
+
+	down_read(&mm->mmap_sem);
     }
     /* ... then we allocate the table ... */
     if (!count) goto out_notbl;
@@ -421,7 +440,7 @@ cr_save_mmaps_data(cr_chkpt_proc_req_t *proc_req)
 	head.end     = desc->end;
 	head.flags   = desc->flags;
 	head.namelen = 0;
-	head.offset  = desc->pgoff << PAGE_SHIFT;
+	head.pgoff   = desc->pgoff;
 	w = cr_kwrite(eb, proc_req->file, &head, sizeof(head));
 	if (w != sizeof(head)) goto bad_write;
 	retval += w;

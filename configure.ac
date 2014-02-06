@@ -1,7 +1,7 @@
 # Process this file with autoconf to produce a configure script.
 #
 #   Berkeley Lab Checkpoint/Restart (BLCR) for Linux is Copyright (c)
-#   2008, The Regents of the University of California, through Lawrence
+#   2012, The Regents of the University of California, through Lawrence
 #   Berkeley National Laboratory (subject to receipt of any required
 #   approvals from the U.S. Dept. of Energy).  All rights reserved.
 #
@@ -22,7 +22,7 @@
 #   along with this program; if not, write to the Free Software
 #   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 #
-# $Id: configure.ac,v 1.410.2.9 2009/06/15 22:33:56 phargrov Exp $
+# $Id: configure.ac,v 1.410.2.52 2013/01/26 00:04:25 phargrov Exp $
 #
 
 ################################################################################
@@ -47,7 +47,7 @@
 # AC_INIT wants to see constants, not shell vars, so we define these with m4.
 m4_define(RELEASE_MAJOR, 0)
 m4_define(RELEASE_MINOR, 8)
-m4_define(RELEASE_PATCH, 2)
+m4_define(RELEASE_PATCH, 5)
 
 m4_define(RELEASE_VERSION, RELEASE_MAJOR.RELEASE_MINOR.RELEASE_PATCH)
 AC_INIT([blcr],[RELEASE_VERSION], [http://ftg.lbl.gov/checkpoint])
@@ -66,7 +66,7 @@ AC_INIT([blcr],[RELEASE_VERSION], [http://ftg.lbl.gov/checkpoint])
 #       'make clean' and rebuild everything to see the new library names.
 LIBCR_MAJOR=0
 LIBCR_MINOR=5
-LIBCR_PATCH=2
+LIBCR_PATCH=5
 
 # 3. Kernel module version
 # ------------------------
@@ -81,7 +81,7 @@ LIBCR_PATCH=2
 # Observe same rules as for library (ie patch->0 when changing minor, etc).
 CR_MODULE_MAJOR=0
 CR_MODULE_MINOR=10
-CR_MODULE_PATCH=1
+CR_MODULE_PATCH=3
 
 # Derived version variables ###
 #   - Exported, so you can use @CR_FOO@ to get them in any files that configure
@@ -126,10 +126,10 @@ AM_INIT_AUTOMAKE([foreign no-exeext std-options])
 ################################################################################
 # Boilerplate for versions and copyrights in generated files
 ################################################################################
-AC_REVISION($Revision: 1.410.2.9 $)
+AC_REVISION($Revision: 1.410.2.52 $)
 AC_COPYRIGHT([[
     Berkeley Lab Checkpoint/Restart (BLCR) for Linux is Copyright (c)
-    2008, The Regents of the University of California, through Lawrence
+    2012, The Regents of the University of California, through Lawrence
     Berkeley National Laboratory (subject to receipt of any required
     approvals from the U.S. Dept. of Energy).  All rights reserved.
 
@@ -153,7 +153,7 @@ AC_COPYRIGHT([[
 
 AH_TOP([/*
  *  Berkeley Lab Checkpoint/Restart (BLCR) for Linux is Copyright (c)
- *  2008, The Regents of the University of California, through Lawrence
+ *  2012, The Regents of the University of California, through Lawrence
  *  Berkeley National Laboratory (subject to receipt of any required
  *  approvals from the U.S. Dept. of Energy).  All rights reserved.
  *
@@ -215,6 +215,7 @@ case $host_cpu in
     ;;
   x86_64)
     CR_ARCH32=i686
+    CR_LIBARCH32=i386
     cr_wordsize=8
     ;;
   ppc64|powerpc64)
@@ -414,6 +415,10 @@ AC_PROG_RANLIB
 # For symbolic links
 AC_PROG_LN_S
 
+# Need our own probe prior to any done in AC_PROG_LIBTOOL
+# Note bug 2619 reports that we can't call this conditionally:
+CR_PROG_CXX
+
 # We use libtool to build
 #   - only build shared lib for now
 AC_DISABLE_STATIC
@@ -452,11 +457,6 @@ if test x"$enable_all_static" = xyes; then
   CR_CLIENT_LDADD="$CR_CLIENT_LDADD -all-static"
 fi
 AC_SUBST(CR_CLIENT_LDADD)
-
-# If building the tests, we can optionally test C++
-if test x"$cr_build_tests" = xyes; then
-  CR_PROG_CXX
-fi
 
 ################################################################################
 # Check libraries
@@ -554,6 +554,9 @@ fi
 # Check for atfork handling
 AC_CHECK_FUNCS([__register_atfork])
 
+# Check for call to disable NSCD
+AC_CHECK_FUNCS([__nss_disable_nscd])
+
 # Check for pthread_attr_setstacksize
 SAVE_LIBS="$LIBS"
 LIBS="-lpthread $LIBS"
@@ -589,8 +592,9 @@ CR_DEFINE_INT(CR_ASM_CHECKPOINT_OMIT,
 	[CR_CHECKPOINT_OMIT],
 	[#include "blcr_common.h.in"])  # ICK!
 CR_DEFINE_INT(CR_ASM_SI_PID_OFFSET,
-	[offsetof(struct siginfo, si_pid)],
+	[offsetof(siginfo_t, si_pid)],
 	[#include <signal.h>
+	 #include <stddef.h>
 	 #ifndef offsetof
   	    #define offsetof(TYPE, MEMBER) ((unsigned long) &((TYPE *)0)->MEMBER)
 	 #endif])
@@ -682,7 +686,7 @@ AC_CHECK_SIZEOF(void *, $cross_void_P)
 CR_LIBARCH=$CR_ARCH
 if test $ac_cv_sizeof_void_p != $cr_wordsize; then
   if test $cr_wordsize = 8; then
-    CR_LIBARCH=$CR_ARCH32
+    CR_LIBARCH=${CR_LIBARCH32:-$CR_ARCH32}
   else
     AC_MSG_ERROR([CC='$CC' yields sizeof(void *) = $ac_cv_sizeof_void_p when expecting $cr_wordsize.$clue])
   fi
@@ -720,7 +724,7 @@ if test x"$enable_multilib" = xyes; then
   eval set -- $ac_configure_args
   for x in "$@"; do
     case "$x" in
-      --host=*|--build=*|--target=*|host_alias=*|build_alias=*|target_alias=*|--libdir=*|--srcdir=*|--with-components=*|--enable-multilib|--enable-testsuite|CFLAGS=*|CXXFLAGS=*)
+      --host=*|--build=*|--target=*|host_alias=*|build_alias=*|target_alias=*|--libdir=*|--srcdir=*|--with-components=*|--enable-multilib|--enable-testsuite|--enable-init-script|CFLAGS=*|CXXFLAGS=*)
 	# skip
 	;;
       *)
@@ -778,7 +782,7 @@ if test x"$enable_multilib" = xyes; then
   # Others?
   AC_MSG_NOTICE([>>>> BEGIN sub-configure for 32-bit libs >>>>])
   AC_MSG_NOTICE([${SUBCMD}])
-  ( mkdir -p libcr32 && cd libcr32 && ln -sf ../util util && eval "${SUBCMD}" )
+  ( mkdir -p libcr32 && cd libcr32 && ln -sf ../util . && eval "${SUBCMD}" )
   if test "$?" = 0; then
     AC_MSG_NOTICE([<<<< END sub-configure for 32-bit libs <<<<])
     cr_build_libcr32=yes
@@ -816,9 +820,9 @@ case x"$with_kernel_type" in
 esac
 # Checks for required kernel src/obj dirs and fail if they are not found 
 CR_CHECK_LINUX()
-AS_IF([test -z "${HAVE_LINUX_2_6}"],
+AS_IF([test -z "${HAVE_LINUX_2_6}" -a -z "${HAVE_LINUX_3}"],
   [AC_CACHE_SAVE
-   AC_MSG_ERROR([[required Linux 2.6.x kernel headers and/or build not found.]])])
+   AC_MSG_ERROR([[required Linux 2.6.x or 3.x.y kernel headers and/or build not found.]])])
 
 # Module install dir
 AC_SUBST([CR_MODULE_DIR])
@@ -834,14 +838,37 @@ else
 fi
 AC_MSG_RESULT([${CR_MODULE_DIR} ($cr_why)])
 
+# Checks for matching (we hope) symbol table
+CR_LINUX_SYMTAB
+
+# Setup CR_KARCH to enable 32-bit user-space on 64-bit kernels
+CR_KARCH=$CR_ARCH
+if test $cr_wordsize = 4; then
+  # Count pointer hex digits in the System.map to id a 64-bit kernel
+  # Based on logic provided by Alan Woodland
+  AC_PROG_EGREP
+  AC_MSG_CHECKING([if kernel and user-space wordsize match])
+  if eval $LINUX_SYMTAB_CMD | head | $EGREP '^[[a-f0-9]]{16}' >/dev/null 2>&1;then
+    AC_MSG_RESULT([no (32-bit user-space with 64-bit kernel)])
+    case $CR_KARCH in
+      i386)  CR_KARCH=x86_64;;
+      ppc)   CR_KARCH=ppc64;;
+      sparc) CR_KARCH=sparc64;;
+    esac
+  else
+    AC_MSG_RESULT([yes])
+  fi
+fi
+AC_SUBST(CR_KARCH)
+
 # Configure automake/kbuild glue
 CR_CHECK_KBUILD
 
 # Configure module compile flags and perform a sanity check
 CR_SET_KCFLAGS
 
-# Checks for matching (we hope) symbol table
-CR_LINUX_SYMTAB
+# Now we can check if SYMTAB matches the kernel
+CR_LINUX_SYMTAB_VALIDATE
 
 ## Check for optional kernel headers...
 CR_CHECK_KERNEL_HEADER([linux/syscalls.h])
@@ -851,10 +878,17 @@ CR_CHECK_KERNEL_HEADER([linux/lockdep.h])
 CR_CHECK_KERNEL_HEADER([linux/compile.h])
 CR_CHECK_KERNEL_HEADER([linux/fdtable.h])
 CR_CHECK_KERNEL_HEADER([linux/utrace.h])
+CR_CHECK_KERNEL_HEADER([linux/perf_event.h])
+CR_CHECK_KERNEL_HEADER([linux/audit.h])
 CR_CHECK_KERNEL_HEADER([asm/elf.h])
 CR_CHECK_KERNEL_HEADER([asm/desc.h],[#include <linux/sched.h>])
 CR_CHECK_KERNEL_HEADER([asm/vsyscall32.h])
 CR_CHECK_KERNEL_HEADER([asm/i387.h])
+CR_CHECK_KERNEL_HEADER([asm/switch_to.h])
+CR_CHECK_KERNEL_HEADER([asm/tls.h])
+
+CR_CHECK_KERNEL_HEADER([linux/utsrelease.h])
+CR_CHECK_KERNEL_HEADER([generated/utsrelease.h])
 
 ## Now we check for specific kernel features...
 
@@ -868,7 +902,53 @@ CR_CHECK_KERNEL_TYPE([struct fdtable],[
       #include <linux/fdtable.h>
     #endif
   ])
-# OK if missing
+
+if test -n "${HAVE_STRUCT_FDTABLE}"; then
+  CR_CHECK_KERNEL_MEMBER([open_fds.fds_bits],[
+      #include <linux/sched.h>
+      #include <linux/file.h>
+      #if HAVE_LINUX_FDTABLE_H
+        #include <linux/fdtable.h>
+      #endif
+    ],[struct fdtable],[unsigned long *],[open_fds->fds_bits])
+  CR_CHECK_KERNEL_CALL([fd_is_open],[
+      #include <linux/sched.h>
+      #include <linux/file.h>
+      #if HAVE_LINUX_FDTABLE_H
+        #include <linux/fdtable.h>
+      #endif
+    ])
+  CR_CHECK_KERNEL_CALL([__set_open_fd],[
+      #include <linux/sched.h>
+      #include <linux/file.h>
+      #if HAVE_LINUX_FDTABLE_H
+        #include <linux/fdtable.h>
+      #endif
+    ])
+  CR_CHECK_KERNEL_CALL([close_on_exec],[
+      #include <linux/sched.h>
+      #include <linux/file.h>
+      #if HAVE_LINUX_FDTABLE_H
+        #include <linux/fdtable.h>
+      #endif
+    ])
+  CR_CHECK_KERNEL_CALL([__set_close_on_exec],[
+      #include <linux/sched.h>
+      #include <linux/file.h>
+      #if HAVE_LINUX_FDTABLE_H
+        #include <linux/fdtable.h>
+      #endif
+    ])
+  # OK if those are missing
+else
+  CR_CHECK_KERNEL_MEMBER([open_fds.fds_bits],[
+      #include <linux/sched.h>
+      #include <linux/file.h>
+      #if HAVE_LINUX_FDTABLE_H
+        #include <linux/fdtable.h>
+      #endif
+    ],[struct files_struct],[unsigned long *],[open_fds->fds_bits])
+fi
 
 CR_CHECK_KERNEL_MEMBER([files_struct.next_fd],[
     #include <linux/sched.h>
@@ -940,6 +1020,13 @@ if test "${HAVE_NAMEIDATA_PATH}${HAVE_NAMEIDATA_DENTRY}" != "1"; then
   CR_BAD_KERNEL([unable to determine composition of struct nameidata])
 fi
 
+CR_CHECK_KERNEL_CALL([path_lookup],[#include <linux/namei.h>])
+CR_CHECK_KERNEL_CALL([kern_path],[#include <linux/namei.h>])
+# Require 1 or more match
+if test -z "${HAVE_PATH_LOOKUP}{HAVE_KERN_PATH}"; then
+  CR_BAD_KERNEL([unable to find either path_lookup() or kern_path()])
+fi
+
 CR_CHECK_KERNEL_CALL([__putname],[#include <linux/fs.h>])
 
 CR_CHECK_KERNEL_TYPE([struct delayed_work],[#include <linux/workqueue.h>])
@@ -985,11 +1072,17 @@ if test "${HAVE_TASK_PIDS_PID_LINK}${HAVE_TASK_PIDS_PID}" = "11"; then
 fi
 
 # put_task_struct() requires one of these:
-CR_FIND_KSYM([__put_task_struct],[CODE])
+CR_FIND_KSYM([__put_task_struct],[CODE],[extern void __put_task_struct(struct task_struct *);])
 CR_FIND_KSYM([__put_task_struct_cb],[CODE])
 
 CR_CHECK_KERNEL_MEMBER([mm.task_size],[#include <linux/sched.h>],
   [struct mm_struct],[unsigned long],[task_size])
+CR_CHECK_KERNEL_MEMBER([mm.exe_file],[
+	#include <linux/mm_types.h>
+	#include <linux/fs.h>],
+  [struct mm_struct],[struct file *],[exe_file])
+CR_CHECK_KERNEL_MEMBER([vma.vm_mm],[#include <linux/mm_types.h>],
+  [struct vm_area_struct],[struct mm_struct *],[vm_mm])
 
 CR_CHECK_KERNEL_CALL([PageAnon],[#include <linux/mm.h>])
 
@@ -1002,7 +1095,7 @@ CR_CHECK_KERNEL_MEMBER([mm.context.vdso],[#include <linux/sched.h>],
   [mm_context_t],[unsigned long],[vdso])
 CR_CHECK_KERNEL_MEMBER([thread_info.sysenter_return],[#include <linux/thread_info.h>],
   [struct thread_info],[void *],[sysenter_return])
-if test $CR_ARCH = arm; then
+if test $CR_KARCH = arm; then
   CR_CHECK_KERNEL_MEMBER([thread_info.tp_value],[#include <linux/thread_info.h>],
     [struct thread_info],[unsigned long],[tp_value])
   CR_FIND_KSYM([__kuser_helper_start],[CODE],[extern int __kuser_helper_start(void);])
@@ -1025,9 +1118,13 @@ CR_CHECK_KERNEL_CALL([map_vsyscall],[
 if test -n "${HAVE_MAP_VSYSCALL}"; then
   CR_FIND_KSYM([map_vsyscall],[CODE])
 fi
-if test $CR_ARCH = x86_64; then
+if test $CR_KARCH = x86_64; then
   CR_FIND_KSYM([syscall32_setup_pages],[CODE],
 	[extern int syscall32_setup_pages(void *, int);])
+fi
+if test $CR_KARCH = arm; then
+  CR_FIND_KSYM([vectors_user_mapping],[CODE],
+	[extern int vectors_user_mapping(void);])
 fi
 
 CR_FIND_KSYM([arch_pick_mmap_layout],[CODE])
@@ -1037,6 +1134,17 @@ CR_CHECK_KERNEL_MEMBER([mm.mmap_base],[#include <linux/sched.h>],
 	[struct mm_struct],[unsigned long],[mmap_base])
 CR_CHECK_KERNEL_MEMBER([mm.cached_hole_size],[#include <linux/sched.h>],
 	[struct mm_struct],[unsigned long],[cached_hole_size])
+
+CR_FIND_KSYM([do_munmap],[CODE])
+CR_CHECK_KERNEL_CALL([do_mmap],[#include <linux/mm.h>])
+CR_CHECK_KERNEL_CALL([do_mmap_pgoff],[#include <linux/mm.h>])
+if test -n "${HAVE_DO_MMAP_PGOFF}"; then
+  CR_FIND_KSYM([do_mmap_pgoff],[CODE])
+elif test -n "${HAVE_DO_MMAP}"; then
+  CR_FIND_KSYM([do_mmap],[CODE])
+else
+  CR_BAD_KERNEL([could not locate either do_mmap() or do_mmap_pgoff()])
+fi
 
 CR_CHECK_KERNEL_MACRO([CONFIG_HUGETLBFS])
 if test -n "${HAVE_CONFIG_HUGETLBFS}"; then
@@ -1056,13 +1164,17 @@ if test -n "${HAVE_CONFIG_HUGETLBFS}"; then
   if test "${HAVE_3_ARG_FOLLOW_HUGE_ADDR}${HAVE_4_ARG_FOLLOW_HUGE_ADDR}" != "1"; then
     CR_BAD_KERNEL([CONFIG_HUGETLBFS set, but unable to determine how invoke follow_huge_addr()])
   fi
+else
+  # Avoid gripes from gcc
+  AC_DEFINE([HAVE_3_ARG_FOLLOW_HUGE_ADDR], [0])
+  AC_DEFINE([HAVE_4_ARG_FOLLOW_HUGE_ADDR], [0])
 fi
 
 # Import the correct symbol for arch-specific ZERO_PAGE(),
 # which must have a prototype in asm/pgtable.h (arch-specific)
 # If we support ia64 or mips in the future we'll need to add more cases here.
 # NOTE: don't try to factor the CR_FIND_KSYM() call; it requires a literal.
-case $CR_ARCH in
+case $CR_KARCH in
   sparc*)
     CR_FIND_KSYM([mem_map_zero],[DATA])
     ZERO_PAGE_SYMBOL=mem_map_zero
@@ -1093,7 +1205,7 @@ CR_FIND_KSYM([group_send_sig_info],[CODE],
 CR_FIND_KSYM([do_sigaltstack],[CODE],
 	[extern int do_sigaltstack(const stack_t *, stack_t *, unsigned long);])
 
-if test $CR_ARCH = i386 -o $CR_ARCH = x86_64; then
+if test $CR_KARCH = i386 -o $CR_KARCH = x86_64; then
   CR_CHECK_KERNEL_TYPE([struct n_desc_struct],[
 	#include <linux/sched.h>
 	#include <asm/desc.h>])
@@ -1119,10 +1231,16 @@ if test $CR_ARCH = i386 -o $CR_ARCH = x86_64; then
 	[struct thread_struct],[unsigned long],[debugreg0])
   CR_CHECK_KERNEL_MEMBER([thread.debugregs],[#include <asm/processor.h>],
 	[struct thread_struct],[unsigned long],[debugreg[1]])
+  CR_CHECK_KERNEL_MEMBER([thread.ptrace_bps],[
+	#include <linux/perf_event.h>
+	#include <asm/processor.h>],
+	[struct thread_struct],[struct perf_event *],[ptrace_bps[1]])
   CR_CHECK_KERNEL_MEMBER([thread.i387],[#include <asm/processor.h>],
 	[struct thread_struct],[union i387_union],[i387])
   CR_CHECK_KERNEL_MEMBER([thread.xstate],[#include <asm/processor.h>],
 	[struct thread_struct],[union thread_xstate *],[xstate])
+  CR_CHECK_KERNEL_MEMBER([thread.fpu],[#include <asm/processor.h>],
+	[struct thread_struct],[struct fpu],[fpu])
 
   CR_CHECK_KERNEL_MEMBER([pt_regs.eflags],[#include <asm/ptrace.h>],[struct pt_regs],[unsigned long],[eflags])
   CR_CHECK_KERNEL_MEMBER([pt_regs.flags],[#include <asm/ptrace.h>],[struct pt_regs],[unsigned long],[flags])
@@ -1144,7 +1262,7 @@ if test $CR_ARCH = i386 -o $CR_ARCH = x86_64; then
   fi
 fi
 
-if test $CR_ARCH = i386; then
+if test $CR_KARCH = i386; then
   CR_CHECK_KERNEL_MEMBER([pt_regs.xcs],[#include <asm/ptrace.h>],[struct pt_regs],[int],[xcs])
   CR_CHECK_KERNEL_MEMBER([pt_regs.xfs],[#include <asm/ptrace.h>],[struct pt_regs],[int],[xfs])
   CR_CHECK_KERNEL_MEMBER([pt_regs.xgs],[#include <asm/ptrace.h>],[struct pt_regs],[int],[xgs])
@@ -1186,6 +1304,10 @@ fi
 
 CR_CHECK_KERNEL_MEMBER([task.cred],[#include <linux/sched.h>],
   [struct task_struct],[const struct cred *],[cred])
+if test -n "${HAVE_TASK_CRED}"; then
+  CR_CHECK_KERNEL_CALL_NARGS([dentry_open],[#include <linux/fs.h>],
+	[NULL,0,NULL],[NULL,NULL,0,NULL])
+fi
 
 CR_CHECK_KERNEL_MEMBER([task.group_info],[#include <linux/sched.h>],
   [struct task_struct],[struct group_info *],[group_info])
@@ -1224,6 +1346,7 @@ CR_CHECK_KERNEL_CALL([find_task_by_pid_ns],[#include <linux/sched.h>])
 if test -z "${HAVE_FIND_TASK_BY_PID}${HAVE_FIND_TASK_BY_PID_NS}"; then
   CR_BAD_KERNEL([unable to determine how to map pid_nr -> struct task])
 fi
+CR_FIND_KSYM([find_task_by_pid_ns],[CODE])
 
 CR_CHECK_KERNEL_CALL([find_task_by_pid_type],[#include <linux/sched.h>])
 CR_CHECK_KERNEL_CALL([find_task_by_pid_type_ns],[#include <linux/sched.h>])
@@ -1341,6 +1464,20 @@ popdef([cr_cvname])[]dnl
 CR_DEFINE(HAVE_KMEM_CACHE_T,[test x$cr_cv_kconfig_HAVE_KMEM_CACHE_T = xyes],
 	    [Define to 1 if the kmem_cache_t typedef exists and is not deprecated])
 
+# type of (struct fs_struct).lock
+CR_CHECK_KERNEL_MEMBER([fs_struct rwlock],[
+    #include <linux/sched.h>
+    #include <linux/fs_struct.h>
+  ],[struct fs_struct],[rwlock_t],[lock])
+CR_CHECK_KERNEL_MEMBER([fs_struct spinlock],[
+    #include <linux/sched.h>
+    #include <linux/fs_struct.h>
+  ],[struct fs_struct],[spinlock_t],[lock])
+if test "$HAVE_FS_STRUCT_RWLOCK$HAVE_FS_STRUCT_SPINLOCK" = "11" \
+     -o "$HAVE_FS_STRUCT_RWLOCK$HAVE_FS_STRUCT_SPINLOCK" = "00" ; then
+  CR_BAD_KERNEL([unrecognized type for fs_struct.lock])
+fi
+ 
 CR_CHECK_KERNEL_TYPE([gfp_t],[#include <linux/slab.h>])
 # OK if missing
 CR_CHECK_KERNEL_CALL([kzalloc],[#include <linux/slab.h>])
@@ -1354,6 +1491,11 @@ CR_CHECK_KERNEL_MEMBER([pipe_inode_info.base],[
     #include <linux/sched.h>
     #include <linux/pipe_fs_i.h>
   ],[struct pipe_inode_info],[char*],[base])
+# OK if missing.
+CR_CHECK_KERNEL_MEMBER([pipe_inode_info.buffers],[
+    #include <linux/wait.h>
+    #include <linux/pipe_fs_i.h>
+    ],[struct pipe_inode_info],[unsigned int],[buffers])
 # OK if missing.
 CR_CHECK_KERNEL_MEMBER([pipe_buf_operations.pin],[
     #include <linux/sched.h>
@@ -1381,10 +1523,46 @@ if test "${HAVE_PIPE_INODE_INFO_BASE}${HAVE_PIPE_BUF_OPERATIONS_PIN}${HAVE_2_ARG
 fi
 CR_FIND_KSYM([anon_pipe_buf_ops],[DATA],
 	[extern struct pipe_buf_operations anon_pipe_buf_ops;])
+CR_CHECK_KERNEL_CALL([pipe_fcntl],[
+    #include <linux/sched.h>
+    #include <linux/pipe_fs_i.h>
+  ])
+if test "${HAVE_PIPE_FCNTL}" = "1"; then
+    CR_FIND_KSYM([pipe_fcntl],[CODE], 
+      [long pipe_fcntl(struct file *file, unsigned int cmd, unsigned long arg);])
+fi
+# Now try to define CR_F_SETPIPE_SZ and CR_F_GETPIPE_SZ, for the pipe test.
+#
+# We try the user space headers first.  If we don't find a definition, then we 
+# poke around the kernel headers for the definition.
+#
+# If we still don't have a definition at this point, the crut test also
+# uses an #ifdef F_SETPIPE_SZ before using CR_F_SETPIPE_SZ, so we have
+# one more chance.
+CR_CHECK_KERNEL_MACRO([F_SETPIPE_SZ],[#include <linux/fcntl.h>])
+CR_CHECK_KERNEL_MACRO([F_GETPIPE_SZ],[#include <linux/fcntl.h>])
+if test "${HAVE_F_SETPIPE_SZ}${HAVE_F_GETPIPE_SZ}" = "11"; then
+    CR_DEFINE_INT(CR_F_SETPIPE_SZ,[F_SETPIPE_SZ],[#include <fcntl.h>])
+    if test -z "${CR_F_SETPIPE_SZ}"; then 
+        CR_DEFINE_KERNEL_INT(
+                  CR_F_SETPIPE_SZ,[F_SETPIPE_SZ],[#include <linux/fcntl.h>])
+    fi
+    CR_DEFINE_INT(CR_F_GETPIPE_SZ,[F_GETPIPE_SZ],[#include <fcntl.h>])
+    if test -z "${CR_F_GETPIPE_SZ}"; then
+        CR_DEFINE_KERNEL_INT(
+                  CR_F_GETPIPE_SZ,[F_GETPIPE_SZ],[#include <linux/fcntl.h>])
+    fi
+fi
+# The user space headers may not define F_SETPIPE_SZ or F_GETPIPE_SZ,
+# and we need these values to run the unit test,
+# so we define CR_F_SETPIPE_SZ and CR_F_GETPIPE_SZ to hold the values
+# that we find in the kernel.
 
 # For O_DIRECT support
 CR_CHECK_KERNEL_MEMBER([file_operations.check_flags],[#include <linux/fs.h>],
 		       [struct file_operations],[],[check_flags])
+CR_CHECK_KERNEL_MEMBER([file.f_lock],[#include <linux/fs.h>],
+		       [struct file],[spinlock_t],[f_lock])
 CR_CHECK_KERNEL_MEMBER([inode.i_mapping],[#include <linux/fs.h>],
 		       [struct inode],[struct address_space*],[i_mapping])
 CR_CHECK_KERNEL_MEMBER([file.f_mapping],[#include <linux/fs.h>],
@@ -1393,6 +1571,9 @@ CR_CHECK_KERNEL_MEMBER([file.f_mapping],[#include <linux/fs.h>],
 if test -z "${HAVE_INODE_I_MAPPING}${HAVE_FILE_F_MAPPING}"; then
   CR_BAD_KERNEL([could not locate address_space in inode or file structs])
 fi
+
+CR_CHECK_KERNEL_MEMBER([file_operations.unlocked_ioctl],[#include <linux/fs.h>],
+		       [struct file_operations],[],[unlocked_ioctl])
 
 CR_CHECK_KERNEL_CALL_NARGS([do_generic_file_read],[#include <linux/fs.h>],
 	[NULL,NULL,NULL,NULL],[NULL,NULL,NULL,NULL,0])
@@ -1407,24 +1588,6 @@ fi
 CR_CHECK_KERNEL_CALL([splice_direct_to_actor],[
 	#include <linux/fs.h>
 	#include <linux/splice.h>])
-
-CR_CHECK_KERNEL_CALL_NARGS([vfs_mknod],[#include <linux/fs.h>],
-	[NULL,NULL,0,0],[NULL,NULL,NULL,0,0])
-if test "${HAVE_4_ARG_VFS_MKNOD}${HAVE_5_ARG_VFS_MKNOD}" != "1"; then
-  CR_BAD_KERNEL([unable to determine how to call vfs_mknod()])
-fi
-
-CR_CHECK_KERNEL_CALL_NARGS([vfs_unlink],[#include <linux/fs.h>],
-	[NULL,NULL],[NULL,NULL,NULL])
-if test "${HAVE_2_ARG_VFS_UNLINK}${HAVE_3_ARG_VFS_UNLINK}" != "1"; then
-  CR_BAD_KERNEL([unable to determine how to call vfs_unlink()])
-fi
-
-CR_CHECK_KERNEL_CALL_NARGS([notify_change],[#include <linux/fs.h>],
-	[NULL,NULL],[NULL,NULL,NULL])
-if test "${HAVE_2_ARG_NOTIFY_CHANGE}${HAVE_3_ARG_NOTIFY_CHANGE}" != "1"; then
-  CR_BAD_KERNEL([unable to determine how to call notify_change()])
-fi
 
 CR_CHECK_KERNEL_MEMBER([task.ptrace],[#include <linux/sched.h>],
 		       [struct task_struct],[unsigned long],[ptrace])
@@ -1486,26 +1649,79 @@ if test -z "$cr_addr"; then
   fi
 fi
 
+# Check for auditing support
+CR_CHECK_KERNEL_MACRO([CONFIG_AUDITSYSCALL])
+if test -n "${HAVE_CONFIG_AUDITSYSCALL}"; then
+  CR_CHECK_KERNEL_CALL([audit_dummy_context], [#include <linux/audit.h>])
+  CR_CHECK_KERNEL_CALL_FULL([2.6.6 audit_syscall_exit],[audit_syscall_exit],[
+        #include <linux/audit.h>
+        #ifdef AUDITSC_RESULT
+          choke me
+        #endif
+    ],[ ],[NULL,0])
+  CR_CHECK_KERNEL_CALL_FULL([2.6.12 audit_syscall_exit],[audit_syscall_exit],[
+        #include <linux/audit.h>
+        #ifndef AUDITSC_RESULT
+          choke me
+        #endif
+    ],[ ],[NULL,AUDITSC_RESULT(0),0])
+  CR_CHECK_KERNEL_CALL_FULL([2.6.17 audit_syscall_exit],[audit_syscall_exit],[
+        #include <linux/audit.h>
+        #ifndef AUDITSC_RESULT
+          choke me
+        #endif
+    ],[ ],[AUDITSC_RESULT(0),0])
+  CR_CHECK_KERNEL_CALL([__audit_syscall_exit], [#include <linux/audit.h>])
+  if test x"${HAVE_2_6_6_AUDIT_SYSCALL_EXIT}${HAVE_2_6_12_AUDIT_SYSCALL_EXIT}${HAVE_2_6_17_AUDIT_SYSCALL_EXIT}${HAVE___AUDIT_SYSCALL_EXIT}" != x"1"; then
+    AC_MSG_ERROR([failed to determine arguments to audit_syscall_exit()])
+  fi
+  if test x"${HAVE_2_6_17_AUDIT_SYSCALL_EXIT}" = x"1"; then
+    CR_FIND_KSYM([audit_syscall_exit],[CODE],
+        [extern void audit_syscall_exit(int failed, long return_code);])
+  elif test x"${HAVE_2_6_12_AUDIT_SYSCALL_EXIT}" = x"1"; then
+    CR_FIND_KSYM([audit_syscall_exit],[CODE],
+        [extern void audit_syscall_exit(struct task_struct *task, int failed, long return_code);])
+  elif test x"${HAVE_2_6_6_AUDIT_SYSCALL_EXIT}" = x"1"; then
+    CR_FIND_KSYM([audit_syscall_exit],[CODE],
+        [extern void audit_syscall_exit(struct task_struct *task, int return_code);])
+  elif test x"${HAVE___AUDIT_SYSCALL_EXIT}" = x"1"; then
+    CR_FIND_KSYM([__audit_syscall_exit],[CODE],
+        [extern void __audit_syscall_exit(int ret_success, long ret_value);])
+  else
+    : # Unreachable?
+    AC_MSG_ERROR([failed to determine arguments to audit_syscall_exit()])
+  fi
+  if test -z "$cr_addr"; then
+    AC_MSG_ERROR([failed to find symbol audit_syscall_exit()])
+  fi
+fi
+
 # For blcr
 CR_FIND_KSYM([set_fs_pwd],[CODE])
 # For vmadump4
 CR_FIND_KSYM([sys_mremap],[CODE],
 	[extern asmlinkage unsigned long sys_mremap(unsigned long addr, unsigned long old_len, unsigned long new_len, unsigned long flags, unsigned long new_addr);])
 CR_FIND_KSYM([do_sigaction],[CODE])
-if test $CR_ARCH = x86_64; then
+if test $CR_KARCH = x86_64; then
   CR_FIND_KSYM([load_gs_index],[CODE])
 
-  CR_CHECK_KERNEL_CALL([read_pda],[#include <asm/percpu.h>])
-  CR_CHECK_KERNEL_CALL([write_pda],[#include <asm/percpu.h>])
+  CR_CHECK_KERNEL_CALL([read_pda],[#include <asm/pda.h>])
+  CR_CHECK_KERNEL_CALL([write_pda],[#include <asm/pda.h>])
   if test "$HAVE_READ_PDA$HAVE_WRITE_PDA" != "11"; then
     CR_CHECK_KERNEL_CALL([percpu_read],[#include <asm/percpu.h>])
     CR_CHECK_KERNEL_CALL([percpu_write],[#include <asm/percpu.h>])
-    if test "$HAVE_PERCPU_READ$HAVE_PERCPU_WRITE" != "11"; then
-      CR_BAD_KERNEL([found neither {read,write}_pda() nor percpu_{read,write}()])
+    CR_CHECK_KERNEL_CALL([this_cpu_read],[#include <linux/percpu.h>])
+    CR_CHECK_KERNEL_CALL([this_cpu_write],[#include <linux/percpu.h>])
+    if test "$HAVE_PERCPU_READ$HAVE_PERCPU_WRITE" != "11" -a \
+            "$HAVE_THIS_CPU_READ$HAVE_THIS_CPU_WRITE" != "11" ; then
+      CR_BAD_KERNEL([found neither {read,write}_pda() nor percpu_{read,write}() nor this_cpu_{read,write}()])
     else
       CR_FIND_KSYM([per_cpu__old_rsp],[DATA],[DECLARE_PER_CPU(unsigned long, old_rsp);])
       if test -z "$cr_addr"; then
-        AC_MSG_ERROR([failed to locate symbol per_cpu__old_rsp])
+        CR_FIND_KSYM([old_rsp],[DATA],[DECLARE_PER_CPU(unsigned long, old_rsp);])
+        if test -z "$cr_addr"; then
+          AC_MSG_ERROR([failed to locate either symbol per_cpu__old_rsp or old_rsp])
+        fi
       fi
     fi
   fi
@@ -1521,10 +1737,15 @@ fi
 CR_FIND_KSYM([expand_files],[CODE],
 	[extern int expand_files(struct files_struct *, int);])
 CR_FIND_KSYM([__flush_icache_range],[CODE])
+
+CR_FIND_KSYM([sys_fchmod],[CODE],
+	[extern asmlinkage long sys_fchmod(int fd, mode_t mode);])
 CR_FIND_KSYM([sys_link],[CODE],
 	[extern asmlinkage long sys_link(const char *oldname, const char *newname);])
-CR_FIND_KSYM([lookup_create],[CODE],
-	[extern struct dentry *lookup_create(struct nameidata *, int);])
+CR_FIND_KSYM([sys_unlink],[CODE],
+	[extern asmlinkage long sys_unlink(const char *pathname);])
+CR_FIND_KSYM([sys_mknod],[CODE],
+	[extern asmlinkage long sys_mknod(const char *filename, int mode, unsigned int dev);])
 
 
 # CODE & DATA used for sanity checks
@@ -1536,7 +1757,10 @@ CR_FIND_KSYM([lookup_create],[CODE],
 # the System.map used to locate symbols and configure time.
 CR_FIND_EXPORTED_KSYM([register_chrdev],[CODE])
 if test "$cr_addr" = "0"; then
-  CR_BAD_KERNEL([kernel does not export register_chrdev])
+  CR_FIND_EXPORTED_KSYM([__register_chrdev],[CODE])
+  if test "$cr_addr" = "0"; then
+    CR_BAD_KERNEL([kernel does not export register_chrdev or __register_chrdev])
+  fi
 fi
 CR_FIND_EXPORTED_KSYM([register_blkdev],[CODE])
 if test "$cr_addr" = "0"; then
@@ -1557,7 +1781,7 @@ fi # cr_build_modules
 if test x"$cr_build_libcr" = xyes && expr $CR_ARCH : ppc >/dev/null; then
   AC_MSG_CHECKING([for work around for bug 2524])
   if test "$cr_build_modules,$force_bug2524" = "yes,"; then
-    if test [`echo $LINUX_VER | sed -e 's/2.6.\([0-9]*\).*/\1/'`] -le 15; then
+    if test [`echo $LINUX_VER | sed -e 's/^2\.6\.\([0-9]*\).*/\1/;' -e 's/^3\..*/999/;'`] -le 15; then
       AC_MSG_ERROR([Because you are building for a PowerPC kernel 2.6.15 or older, you must specify either --with-bug2524 or --without-bug2524.  If in doubt --with-bug2524 is the safe option (with a small performance penalty).])
     fi
   fi

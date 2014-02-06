@@ -21,7 +21,7 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
- * $Id: crut_util.c,v 1.31.6.1 2009/03/12 20:07:38 phargrov Exp $
+ * $Id: crut_util.c,v 1.31.6.2 2013/01/03 05:11:25 phargrov Exp $
  *
  * Utility functions for BLCR tests (excluding threaded portions)
  */
@@ -358,23 +358,26 @@ char *crut_find_testsdir(const char *argv0) {
     char *dalloc, *dir;
     char *base;
     char *result;
+    size_t dirlen;
 
     base = crut_basename(argv0);
     dir = dirname(dalloc = strdup(argv0));
-    if (!strncmp("lt-", base, 3)) {
-	/* Blasted libtool!!  Two possibilities at this point.  */
-        if (!strcmp(dir, ".")) {
-	    /* ARGV0=basename $PATH=testsdir/.libs:ORIG_PATH */
-	    const char *p = getenv("PATH");
-	    const char *q = strchr(p, ':');
-	    free(dalloc);
-	    dir = dalloc = q ? strndup(p, q-p) : strdup(p);
-	} else  {
-	    /* ARGV0=testsdir/.libs/basename */
-	}
-	/* Strip .libs from dir */
-	dir = dirname(dir);
+
+    if (!strncmp("lt-", base, 3) && !strcmp(dir, ".")) {
+	/* ARGV0=basename $PATH=testsdir/.libs:ORIG_PATH */
+	const char *p = getenv("PATH");
+	const char *q = strchr(p, ':');
+	free(dalloc);
+	dir = dalloc = q ? strndup(p, q-p) : strdup(p);
     }
+
+    /* Strip trailing "/.libs" from dir if present */
+    dirlen = strlen(dir);
+    if ((dirlen > 5) && !strcmp("/.libs", dir + (dirlen - 6))) {
+	/* ARGV0=testsdir/.libs/basename */
+	dir[dirlen - 6] = '\0';
+    }
+
     result = strdup(dir);
     free(base);
     free(dalloc);

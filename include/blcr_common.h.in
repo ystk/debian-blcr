@@ -21,7 +21,7 @@
  * License along with this library; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
- * $Id: blcr_common.h.in,v 1.50.4.1 2009/02/14 01:50:12 phargrov Exp $
+ * $Id: blcr_common.h.in,v 1.50.4.2 2011/09/30 20:33:30 phargrov Exp $
  *
  * This file contains definitions of BLCR types and constants that are
  * common to both user-space and kernel-space.
@@ -220,7 +220,11 @@ struct cr_rstrt_relocate_pair {
 struct cr_rstrt_relocate {
 	unsigned int    count;
 	struct cr_rstrt_relocate_pair
+#if defined(__GNUC__) && (__GNUC__ < 3)
 			path[0]; // GNU (not ISO C99) variable length array
+#else
+			path[]; // ISO C99 variable length array
+#endif
 };
 // Bytes to allocate for struct cr_rstrt_relocate with _cnt path entries:
 #define CR_RSTRT_RELOCATE_SIZE(_cnt) (sizeof(struct cr_rstrt_relocate) + \

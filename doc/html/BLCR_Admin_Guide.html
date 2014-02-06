@@ -1,7 +1,7 @@
 <!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
 <html>
 <head>
-  <title>BLCR Admin Guide - version 0.8.2</title>
+  <title>BLCR Admin Guide - version 0.8.5</title>
   <meta http-equiv="Content-Type"
  content="text/html; charset=ISO-8859-1">
 </head>
@@ -18,13 +18,13 @@ command-line executables. <em>No kernel patching is required.</em>
 </p>
 <ul>
   <li>Many major vendor distributions of Linux. Those tested
-historically have include
-SuSE 9.x and OpenSuSE 10.0 though 11.0, CentOS 3.1, and Fedora Core 2
-through 10 (Note: this list is NOT exclusive).</li>
-  <li>Many "vanilla" Linux 2.6.x kernels (from <a
+historically have included SuSE,
+RHEL (and clones such as CentOS and Scientific Linux), Fedora, Debian and Ubuntu
+(and this list is NOT exhaustive).</li>
+  <li>Many "vanilla" Linux 2.6.x and 3.x.y kernels (from <a
  href="http://www.kernel.org/">kernel.org</a>) have also been tested
-with many glibc versions (2.2 through 2.9).<br>
-We believe vanilla versions 2.6.0 through 2.6.30 all work.
+with many glibc versions (2.2 and up).<br>
+We believe vanilla versions 2.6.0 through 3.7.1 all work.
   <li>BLCR uses a set of autoconf-based feature tests to probe the
 kernels it builds against. It is thus likely that a custom kernel based
 on one of the above kernel sources will work with BLCR, provided that
@@ -35,11 +35,14 @@ BLCR uses assembly code to save some program state (most notably the
 CPU
 registers). This means that the BLCR kernel modules are not portable
 across CPU
-architectures "out of the box". <b>Currently only x86 and x86_64
-systems are fully tested with
-BLCR</b>. The 0.6.0 release was the first to include <em>experimental</em>
+architectures "out of the box".
+BLCR has long supported the x86 and x86_64 architectures.&nbsp;
+The 0.6.0 release was the first to include <em>experimental</em>
 support for PowerPC64 and for ARM, while the 0.7.0 release added
 <em>experimental</em> support for 32-bit PowerPC.&nbsp;
+<b>Currently x86 and x86_64 systems are the most fully tested with BLCR,
+with the other architectures tested heavily only at release time</b>.
+
 Porting BLCR to a different CPU is not a large software effort <b>if</b>
 one has sufficient Linux kernel experience and knowledge of the target
 CPU's ABI and instructions.&nbsp;
@@ -205,11 +208,11 @@ pthreads, <strong>which BLCR does not support</strong>.  This happens
 because currently many Linux distributions install the LinuxThreads
 static libraries in the default library search path, and the
 BLCR-supported NPTL libraries are installed elsewhere.  If this
-happens to you, then it is likely that a large fraction of the
-BLCR test suite (run via <tt>make check</tt>) will fail.  The solution
+happens to you, then configure
+will fail.  The solution
 is to provide the proper "CPPFLAGS" and "LDFLAGS" when you configure
 BLCR.  Appending something like the following to the <tt>configure</tt>
-command line will probably work:
+command line may work:
 <ul>
   <li><strong>CPPFLAGS='-I/usr/include/nptl' 
 	LDFLAGS='-L/usr/lib/nptl -L/usr/lib64/nptl'</strong></li>
@@ -427,6 +430,11 @@ version of rpmbuild and may be i386 (which will be rejected).
 See the documentation for <tt>rpmbuild</tt> for more information on
 building
 binary RPMs from source RPMs.
+<p>If you are on a 64-bit platform and do not wish to build the 32-bit
+libraries (or lack the required toolchain), then you can disable
+the default <code>--enable-multilib</code> behavior of the source RPM
+by adding <tt>--define 'with_multilib 0'</tt> to the <tt>rpmbuild</tt>
+command line.
 <p>The RPMs should build without error. However, if not building for
 the running
 kernel, you may see a warning about this. You will see the location of
@@ -434,11 +442,11 @@ the binary
 RPMs in the last few lines of output from <tt>rpmbuild</tt> - 
 something like this:
 </p><pre>
-    Wrote: /usr/src/redhat/RPMS/i686/blcr-0.8.2-1.i686.rpm
-    Wrote: /usr/src/redhat/RPMS/i686/blcr-libs-0.8.2-1.i686.rpm
-    Wrote: /usr/src/redhat/RPMS/i686/blcr-devel-0.8.2-1.i686.rpm
-    Wrote: /usr/src/redhat/RPMS/i686/blcr-modules_2.6.12_1.234-0.8.2-1.i686.rpm
-    Wrote: /usr/src/redhat/RPMS/i686/blcr-testsuite-0.8.2-1.i686.rpm
+    Wrote: /usr/src/redhat/RPMS/i686/blcr-0.8.5-1.i686.rpm
+    Wrote: /usr/src/redhat/RPMS/i686/blcr-libs-0.8.5-1.i686.rpm
+    Wrote: /usr/src/redhat/RPMS/i686/blcr-devel-0.8.5-1.i686.rpm
+    Wrote: /usr/src/redhat/RPMS/i686/blcr-modules_2.6.12_1.234-0.8.5-1.i686.rpm
+    Wrote: /usr/src/redhat/RPMS/i686/blcr-testsuite-0.8.5-1.i686.rpm
 </pre>
 You should note that the kernel version <tt>2.6.12-1.234</tt> has
 become
@@ -457,12 +465,12 @@ operation of BLCR.  You may be asked to do this if you report bugs to us.
     <ul>
     <li> There is a known problem with signal handling in some PowerPC kernel versions
          2.6.15 and older that can cause restart failures with BLCR.  Therefore,
-         for effected kernels one must configure with '<tt>--with-bug2514</tt>' to
+         for effected kernels one must configure with '<tt>--with-bug2524</tt>' to
          enable a work-around in BLCR (with a very small performance penalty).<br>
          If you are configuring for a kernel 2.6.15 or older on a PowerPC, BLCR's
-         configure script will require either '<tt>--with-bug2514</tt>' or
-         '<tt>--without-bug2514</tt>'.  If you are uncertain, configure using
-         '<tt>--with-bug2514</tt>', which is always safe.  If you make an incorrect
+         configure script will require either '<tt>--with-bug2524</tt>' or
+         '<tt>--without-bug2524</tt>'.  If you are uncertain, configure using
+         '<tt>--with-bug2524</tt>', which is always safe.  If you make an incorrect
          choice at configure time, then when you run '<tt>make check</tt>' the
          test '<tt>bug2524</tt>' will let you know.<br></li>
     </ul>
@@ -470,18 +478,8 @@ operation of BLCR.  You may be asked to do this if you report bugs to us.
   <li>ARM<br>
     <ul>
     <li> Kernel versions 2.6.11 and older lack true atomic compare-and-swap
-         support.  Therefore with such kernels (or when the kernel is unknown at
-         configure time), BLCR uses the same "not quite atomic" operations that
-         have historically been used by the LinuxThreads library.  We are not
-         confident that this implementation is sufficiently robust, and would
-         recommend using a 2.6.12 kernel or later on ARM.</li>
-    <li> When configuring with '<tt>--with-installed-modules</tt>', the kernel
-         version is not probed, and the "not quite atomic" code mentioned above
-         is therefore used.  For this reason, we discourage use of the
-         '<tt>--with-installed-modules</tt>' configure option on ARM.</li>
-    <li> There is currently no support for FPU hardware on ARM.  If you have an
-         ARM platform with hardware floating-point, and can help testing for
-         such support in BLCR, please contact us.</li>
+         support, which BLCR require.  Therefore, one must
+         use a 2.6.12 kernel or later on ARM plarforms.</li>
     </ul>
   </li>
 </ul>

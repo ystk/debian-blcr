@@ -17,7 +17,7 @@
  *  along with this program; if not, write to the Free Software
  *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
- * $Id: vmadump_arm.c,v 1.8 2008/06/04 22:19:15 phargrov Exp $
+ * $Id: vmadump_arm.c,v 1.8.16.5 2012/12/22 19:14:36 phargrov Exp $
  *
  *  Experimental ARM support contributed by Anton V. Uzunov
  *  <anton.uzunov@dsto.defence.gov.au> of the Australian Government
@@ -34,6 +34,10 @@
 
 #define __VMADUMP_INTERNAL__
 #include "vmadump.h"
+
+#if HAVE_ASM_TLS_H
+#  include <asm/tls.h>
+#endif
 
 #ifdef VMAD_DEBUG_FLAG
   #define VMAD_DEBUG(arg...)	CR_KTRACE_DEBUG( arg )
@@ -143,15 +147,25 @@ int vmadump_restore_cpu(cr_rstrt_proc_req_t *ctx, struct file *file,
   if (r != sizeof(thread->tp_value)) goto bad_read;
   VMAD_DEBUG( "vmadump: thread->tp_value == %ld",
               thread->tp_value );
- #if defined(CONFIG_HAS_TLS_REG)
+ #if defined(has_tls_reg)
+  /* Since 2.6.36 tls_emu and had_tls_reg are macros w/ value 0 or 1 */
+  if (tls_emu) {
+    /* Do nothing */
+  } else if (has_tls_reg) {
+    asm ("mcr p15, 0, %0, c13, c0, 3" : : "r" (thread->tp_value) );
+  } else { // Note: must be (much) later than 2.6.12
+    *((unsigned int *)0xffff0ff0) = (thread->tp_value);
+  }
+ #elif defined(CONFIG_TLS_REG_EMUL)
+  /* Do nothing */
+ #elif defined(CONFIG_HAS_TLS_REG)
   asm ("mcr p15, 0, %0, c13, c0, 3" : : "r" (thread->tp_value) );
- #elif !defined(CONFIG_TLS_REG_EMUL)
-  #if defined(CR_KCODE___kuser_helper_start) /* NPTL support code in 2.6.12 and later */
-   *((unsigned int *)0xffff0ff0) = (thread->tp_value);
-  #else
-   // The 2.6.11 kernel did this differently.
-   *((unsigned int *)0xffff0ffc) = (thread->tp_value);
-  #endif
+ #elif defined(CR_KCODE___kuser_helper_start)
+  // NPTL support code in 2.6.12 and later
+  *((unsigned int *)0xffff0ff0) = (thread->tp_value);
+ #else
+  // The 2.6.11 kernel did this differently.
+  *((unsigned int *)0xffff0ffc) = (thread->tp_value);
  #endif
 #endif
 
@@ -161,6 +175,73 @@ bad_read:
   if (r >= 0) r = -EIO;
   return( r );
 }
+
+#if defined(ARCH_HAS_SETUP_ADDITIONAL_PAGES)
+
+int vmad_is_arch_map(const struct vm_area_struct *map)
+{
+	return (map->vm_start == 0xffff0000);
+}
+EXPORT_SYMBOL_GPL(vmad_is_arch_map);
+
+loff_t vmad_store_arch_map(cr_chkpt_proc_req_t *ctx, struct file *file,
+			   struct vm_area_struct *map, int flags)
+{
+    loff_t r = 0;
+
+    if (vmad_is_arch_map(map)) {
+	/* Just write out a section header */
+        struct vmadump_vma_header head;
+	head.start   = map->vm_start;
+	head.end     = map->vm_end;
+	head.flags   = map->vm_flags;
+	head.namelen = VMAD_NAMELEN_ARCH;
+	head.pgoff   = 0;
+
+	up_read(&current->mm->mmap_sem);
+	r = write_kern(ctx, file, &head, sizeof(head));
+	down_read(&current->mm->mmap_sem);
+
+	if (r < 0) return r;
+	if (r != sizeof(head)) r = -EIO;
+    }
+
+    return r;
+}
+
+int vmad_load_arch_map(cr_rstrt_proc_req_t *ctx, struct file *file,
+		       struct vmadump_vma_header *head)
+{
+    struct vm_area_struct *map;
+    long r;
+
+    /* First check if the mapping is still/already in place */
+    down_read(&current->mm->mmap_sem);
+    map = find_vma(current->mm, 0xffff0000);
+    up_read(&current->mm->mmap_sem);
+    if (map != NULL) goto out;
+    
+    /* NOT REACHED - since in practice we'll never remove the mapping. */
+
+  #if HAVE_2_ARG_ARCH_SETUP_ADDITIONAL_PAGES
+    r = arch_setup_additional_pages(NULL, 0);
+  #elif HAVE_4_ARG_ARCH_SETUP_ADDITIONAL_PAGES
+    r = arch_setup_additional_pages(NULL, 0, 0, 0);
+  #else
+    #error "Unknown calling convention to map the vectors page"
+  #endif
+    if (r < 0) {
+	CR_ERR_CTX(ctx, "arch_setup_additional_pages failed %d", (int)r);
+	goto err;
+    }
+
+out:
+    r = 0;
+err:
+    return r;
+}
+
+#endif // defined(ARCH_HAS_SETUP_ADDITIONAL_PAGES)
 
 /*
  * Local variables:

@@ -21,7 +21,7 @@
  * License along with this library; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
- * $Id: cr_cs.c,v 1.67.14.2 2009/02/18 03:41:27 phargrov Exp $
+ * $Id: cr_cs.c,v 1.67.14.3 2011/08/24 02:35:39 phargrov Exp $
  */
 
 #include <errno.h>
@@ -270,7 +270,7 @@ cr_register_callback(cr_callback_t	func,
 		     int		flags)
 {
     cri_info_t *info = CRI_INFO_OR_RETURN(-1);	// thread-specific
-    int context;
+    int context = 0; // silence a "used uninitialized" warning
     int retval = -1; // assume failure
     int state;
 

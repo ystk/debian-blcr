@@ -21,12 +21,11 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
- * $Id: cr_dump_self.c,v 1.228.8.1 2009/03/26 04:22:43 phargrov Exp $
+ * $Id: cr_dump_self.c,v 1.228.8.7 2012/12/19 05:21:28 phargrov Exp $
  */
 
 #include "cr_module.h"
 
-#include <linux/smp_lock.h>
 #include <linux/pipe_fs_i.h>
 #include <linux/binfmts.h>
 #include <linux/major.h>
@@ -168,11 +167,11 @@ cr_save_fs_struct(cr_chkpt_proc_req_t *proc_req)
         goto out_nomem;
     }
 
-    read_lock(&current->fs->lock);
+    cr_read_lock_fs(&current->fs->lock);
     umask = current->fs->umask;
     CR_PATH_GET_FS(root_path, current->fs->root);
     CR_PATH_GET_FS(pwd_path, current->fs->pwd);
-    read_unlock(&current->fs->lock);
+    cr_read_unlock_fs(&current->fs->lock);
 
     /* save umask */
     retval = cr_kwrite(eb, cf_filp, &umask, sizeof(umask));
@@ -263,9 +262,9 @@ cr_get_fd_info(struct files_struct *files, int fd, struct cr_file_info *file_inf
 
     rcu_read_lock();
     fdt = cr_fdtable(files);
-    if (FD_ISSET(fd, fdt->open_fds)) {
+    if (cr_read_open_fd(fd, fdt)) {
         file_info->fd      = fd;
-        file_info->cloexec = FD_ISSET(fd, fdt->close_on_exec);
+        file_info->cloexec = cr_read_close_on_exec(fd, fdt);
         file_info->orig_filp = fcheck(fd);
     } else {
         CR_WARN("cr_get_fd_info: Called on closed file!");
@@ -462,7 +461,7 @@ cr_save_open_chr(cr_chkpt_proc_req_t *proc_req, struct file *filp)
 
     inode = filp->f_dentry->d_inode;
 
-    cf_chrdev.cr_type  = cr_open_chr;
+    cf_chrdev.cr_type  = cr_chrdev_obj;
     if (cr_task_tty(current) && (cr_task_tty(current) == (struct tty_struct *)filp->private_data)) {
 	/* Map CTTY -> /dev/tty */
 	cf_chrdev.cr_major = TTYAUX_MAJOR;
@@ -511,7 +510,7 @@ cr_save_open_dup(cr_chkpt_proc_req_t *proc_req, struct file *filp)
       goto out;
 
     /* placeholder... just in case we need to do something later */
-    cf_dup.cr_type  = cr_open_dup;
+    cf_dup.cr_type  = cr_dup_obj;
 
     retval = cr_kwrite(eb, cf_filp, &cf_dup, sizeof(cf_dup));
     if (retval != sizeof(cf_dup)) {
@@ -738,9 +737,7 @@ cr_save_header(cr_chkpt_proc_req_t *proc_req, struct file *filp)
     /* If !proc_req, the rest are meaningless */
 
     cf_head.clone_flags = CLONE_VM | CLONE_FS | CLONE_FILES | CLONE_SIGHAND;
-    if (atomic_read(&current->signal->count) > 1) {
-	cf_head.clone_flags |= CLONE_THREAD | CLONE_DETACHED;
-    }
+    cf_head.clone_flags |= CLONE_THREAD | CLONE_DETACHED;
 
     cf_head.tmp_fd = proc_req ? proc_req->tmp_fd : -1;
 

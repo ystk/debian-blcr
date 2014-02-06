@@ -21,7 +21,7 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
- * $Id: prctl.c,v 1.6.8.1 2009/02/07 00:00:17 phargrov Exp $
+ * $Id: prctl.c,v 1.6.8.4 2011/10/04 21:07:21 phargrov Exp $
  *
  * Simple tests of prctl()
  */
@@ -48,6 +48,7 @@ int main(void) {
 enum {
 	my_type_int_ptr,	// 2nd arg is int for set, but addr for get
 	my_type_int,		// 2nd arg is int for set, and get is returned
+	my_type_bool,		// like type_int except set must be 0 or 1
 	my_type_comm		// 2nd arg is buffer for string in and out
 };
 
@@ -73,13 +74,13 @@ struct test_elem test_table[] = {
 #endif
 #if defined(PR_GET_DUMPABLE)
 	/* Can't write anything but 1, or checkpoint will fail */
-	{"PR_GET_DUMPABLE", my_type_int, PR_GET_DUMPABLE, PR_SET_DUMPABLE, 1, 1, },
+	{"PR_GET_DUMPABLE", my_type_bool, PR_GET_DUMPABLE, PR_SET_DUMPABLE, 1, 1, },
 #endif
 #if defined(PR_GET_UNALIGN)
 	{"PR_GET_UNALIGN", my_type_int_ptr, PR_GET_UNALIGN, PR_SET_UNALIGN, 0, PR_UNALIGN_NOPRINT, },
 #endif
 #if defined(PR_GET_KEEPCAPS)
-	{"PR_GET_KEEPCAPS", my_type_int, PR_GET_KEEPCAPS, PR_SET_KEEPCAPS, 0, 1, },
+	{"PR_GET_KEEPCAPS", my_type_bool, PR_GET_KEEPCAPS, PR_SET_KEEPCAPS, 0, 1, },
 #endif
 #if defined(PR_GET_FPEMU)
 	{"PR_GET_FPEMU", my_type_int_ptr, PR_GET_FPEMU, PR_SET_FPEMU, 0, 1, },
@@ -134,17 +135,20 @@ void prctl_init(void) {
       break;
     }
   
+    case my_type_bool:
     case my_type_int: {
       int val;
       elem->value.i = -1;
       result = prctl(elem->read, 0UL);
       if (result < 0) break;
+      if ((elem->type == my_type_bool) && (result > 0)) result = 1;
       CRUT_DEBUG("Read %s=%d", elem->name, result);
       val = (result == elem->arg2a) ? elem->arg2b : elem->arg2a;
       result = prctl(elem->write, val);
       if (result < 0) break;
       val = prctl(elem->read, 0UL); /* Read back again */
-      if (result < 0) break;
+      if (val < 0) break;
+      if ((elem->type == my_type_bool) && (val > 0)) val = 1;
       CRUT_DEBUG("Wrote %s=%d", elem->name, val);
       elem->value.i = val;
       break;
@@ -192,9 +196,11 @@ int prctl_check(void) {
       break;
     }
 
+    case my_type_bool:
     case my_type_int: {
       if (elem->value.i == -1) break;
       result = prctl(elem->read, 0UL);
+      if ((elem->type == my_type_bool) && (result > 0)) result = 1;
       if (result != elem->value.i) {
 	  CRUT_FAIL("Param %s changed from %d to %d\n",
 		    elem->name, elem->value.i, result);

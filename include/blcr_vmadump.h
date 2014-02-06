@@ -22,7 +22,7 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
- * $Id: blcr_vmadump.h,v 1.17 2008/06/19 06:49:43 phargrov Exp $
+ * $Id: blcr_vmadump.h,v 1.17.14.1 2012/12/18 18:32:07 phargrov Exp $
  *
  * This file provides declarations for BLCR-specific VMADump extensions.
  */
@@ -92,10 +92,20 @@ static inline int vmad_dentry_unlinked(struct dentry *dentry) {
 	  (dentry->d_flags & DCACHE_NFSFS_RENAMED));
 }
 
+static inline int vmad_is_exe(struct vm_area_struct *map) {
+#if HAVE_VMA_VM_MM && HAVE_MM_EXE_FILE
+  return (map->vm_mm && (map->vm_mm->exe_file == map->vm_file));
+#elif defined(VM_EXECUTABLE)
+  return (map->vm_flags & VM_EXECUTABLE);
+#else
+  #error "No way to detect /proc/pid/exe"
+#endif
+}
+
 /* Here because vmadump and BLCR must agree */
 static inline int vmad_is_special_mmap(struct vm_area_struct *map, int flags) {
-  struct file *filp = map->vm_file;
-  unsigned long vm_flags = map->vm_flags;
+  const struct file * const filp = map->vm_file;
+  const unsigned long vm_flags = map->vm_flags;
 
   BUG_ON(!filp);
 				    
@@ -110,7 +120,7 @@ static inline int vmad_is_special_mmap(struct vm_area_struct *map, int flags) {
     return (vm_flags & VM_SHARED);
   }
 
-  return (((flags & VMAD_DUMP_NOEXEC)    &&  (vm_flags & VM_EXECUTABLE)) ||
+  return (((flags & VMAD_DUMP_NOEXEC)    &&  vmad_is_exe(map)) ||
 	  ((flags & VMAD_DUMP_NOPRIVATE) && !(vm_flags & VM_SHARED)) ||
 	  ((flags & VMAD_DUMP_NOSHARED)  &&  (vm_flags & VM_SHARED)));
 }

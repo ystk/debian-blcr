@@ -21,7 +21,7 @@
  * License along with this library; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
- * $Id: cr_private.h,v 1.107.4.2 2009/02/18 03:41:27 phargrov Exp $
+ * $Id: cr_private.h,v 1.107.4.4 2012/12/21 07:21:25 phargrov Exp $
  */
 
 #ifndef _CR_PRIVATE_H
@@ -223,6 +223,7 @@ extern int cri_barrier_enter(cri_atomic_t *x);
 extern int __libc_current_sigrtmax(void);
 extern int __libc_allocate_rtsig(int);
 extern pid_t __fork(void);
+extern void __nss_disable_nscd(void *);
 
 // Alternate signal handlers
 extern void cri_run_sig_handler(int, siginfo_t *, void *);

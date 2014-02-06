@@ -22,15 +22,18 @@
 #   along with this program; if not, write to the Free Software
 #   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 #
-#  $Id: autogen.sh,v 1.7 2008/04/29 18:53:37 phargrov Exp $
+#  $Id: autogen.sh,v 1.7.38.3 2012/12/21 23:32:49 phargrov Exp $
 
 set -e
 
 mkdir -p config
-rm -f {.,config}/{config.guess,config.sub,install-sh,libtool,ltmain.sh,missing,mkinstalldirs}
+for dir in . ./config; do
+  ( cd $dir && rm -f config.guess config.sub depcomp install-sh libtool ltmain.sh missing mkinstalldirs )
+done
 rm -rf autom4te.cache
 aclocal
 autoheader
+touch blcr_config.h.in
 autoconf
 libtoolize --automake --copy
 if [ -f ./ltmain.sh ]; then

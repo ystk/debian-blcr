@@ -21,7 +21,7 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
- * $Id: cr_context.h,v 1.72 2008/11/24 04:11:16 phargrov Exp $
+ * $Id: cr_context.h,v 1.72.8.2 2012/12/19 05:21:28 phargrov Exp $
  */
 
 /*
@@ -188,7 +188,7 @@ struct cr_open_dir {
 };
 
 struct cr_chrdev {
-    cr_obj_t cr_type; /* cr_open_chr */
+    cr_obj_t cr_type; /* cr_chrdev_obj */
     unsigned int cr_major;
     unsigned int cr_minor;
     mode_t i_mode;
@@ -196,7 +196,7 @@ struct cr_chrdev {
 };
 
 struct cr_dup {
-    cr_obj_t cr_type; /* cr_open_dup */
+    cr_obj_t cr_type; /* cr_dup_obj */
     /* nothing more */
 };
 
@@ -214,6 +214,7 @@ struct cr_fifo {
    unsigned int fifo_flags;
    int fifo_perms; /* for mknod */
    void *fifo_dentry; /* f_dentry value at checkpoint time */
+   long pipe_sz;    /* store the size of the pipe buffer */
 };
 
 /*

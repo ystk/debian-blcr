@@ -17,13 +17,14 @@
  *  along with this program; if not, write to the Free Software
  *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
- * $Id: vmadump_common.c,v 1.86 2008/12/17 03:29:10 phargrov Exp $
+ * $Id: vmadump_common.c,v 1.86.4.14 2013/01/29 20:17:11 phargrov Exp $
  *
  * THIS VERSION MODIFIED FOR BLCR <http://ftg.lbl.gov/checkpoint>
  *-----------------------------------------------------------------------*/
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/version.h>
+#include "blcr_config.h"
 
 #include <linux/sched.h>
 
@@ -32,14 +33,13 @@
 #include <linux/mm.h>
 #include <linux/mman.h>
 #include <linux/binfmts.h>
-#include <linux/smp_lock.h>
+#if !HAVE_FILE_F_LOCK
+  #include <linux/smp_lock.h>
+#endif
 #include <linux/unistd.h>
 #include <linux/personality.h>
 #include <linux/highmem.h>
 #include <linux/ptrace.h>
-#ifdef HAVE_LINUX_SYSCALLS_H
-  #include <linux/syscalls.h>	/* for mprotect, etc. */
-#endif
 #include <linux/init.h>
 #include <linux/prctl.h>
 #include <asm/pgtable.h>
@@ -533,22 +533,20 @@ ssize_t vmadump_write_k(struct vmadump_hook_handle *h,
 }
 #endif
 
-/*
- * directio_start
+/* directio_avail
  *
- * The caller MUST ensure that the filp is aligned properly (usually to 
- * 512 bytes) before calling this routine.  I've aligned everything to page 
- * size.
+ * Boolean return: non-zero if directio_start will succeed
  */
 static
-unsigned int
-directio_start(struct file *filp)
+int
+directio_avail(struct file *filp)
 {
-    unsigned int saved_flags = filp->f_flags;
+    int result = 0; /* assume failure */
 
     /*
      * This was basically ripped out of setfl() in 2.6.22, with some #if's
      * added based on 2.6.1->2 and 2.6.7->8 changes to that function.
+     * And for 2.6.29->30 changes (file.f_lock)
      *
      * The alternative is to call sys_fcntl() directly.  This is a good idea.
      * But right now I'm not in the mood to walk the fd array to identify the
@@ -556,6 +554,10 @@ directio_start(struct file *filp)
      *
      * XXX:  Do that.
      */
+
+    /* Cannot perform alignment unless f_pos is being advanced */
+    if (!filp->f_pos)
+        goto out;
 
   #if HAVE_FILE_F_MAPPING
     /* Order matters, if kernel has both f_mapping and i_mapping use f_mapping */
@@ -573,12 +575,48 @@ directio_start(struct file *filp)
 
   #if HAVE_FILE_OPERATIONS_CHECK_FLAGS
     if (filp->f_op && filp->f_op->check_flags &&
-        filp->f_op->check_flags(saved_flags | O_DIRECT))
+        filp->f_op->check_flags(filp->f_flags | O_DIRECT))
         goto out;
   #else
     /* OK */
   #endif
 
+    result = 1;
+
+out:
+    return result;
+}
+
+/*
+ * directio_start
+ *
+ * The caller MUST ensure that the filp is aligned properly (usually to 
+ * 512 bytes) before calling this routine.  I've aligned everything to page 
+ * size.
+ */
+static
+unsigned int
+directio_start(struct file *filp)
+{
+    unsigned int saved_flags = filp->f_flags;
+
+    /*
+     * This was basically ripped out of setfl() in 2.6.22, with some #if's
+     * added based on 2.6.1->2 and 2.6.7->8 changes to that function.
+     * And for 2.6.29->30 changes (file.f_lock)
+     *
+     * The alternative is to call sys_fcntl() directly.  This is a good idea.
+     * But right now I'm not in the mood to walk the fd array to identify the
+     * proper file descriptor.
+     *
+     * XXX:  Do that.
+     */
+
+  #if HAVE_FILE_F_LOCK
+    spin_lock(&filp->f_lock);
+    filp->f_flags |= O_DIRECT;
+    spin_unlock(&filp->f_lock);
+  #else
     /* The lock_kernel() does appear necessary here because both
      * setfl() and ioctl() use it when modifying f_flags.  So, to
      * prevent corruption of f_flags, we take the lock too.
@@ -588,17 +626,23 @@ directio_start(struct file *filp)
     lock_kernel();
     filp->f_flags |= O_DIRECT;
     unlock_kernel();
+  #endif
 
-out:
     return saved_flags;
 }
 
 static
 void directio_stop(struct file *filp, unsigned int saved_flags)
 {
+  #if HAVE_FILE_F_LOCK
+    spin_lock(&filp->f_lock);
+    filp->f_flags = saved_flags;
+    spin_unlock(&filp->f_lock);
+  #else
     lock_kernel();
     filp->f_flags = saved_flags;
     unlock_kernel();
+  #endif
 }
 
 /* sys_prctl "by value" */
@@ -628,6 +672,44 @@ int vmadump_sigaltstack_k(const stack_t *ss, stack_t *oss) {
 /*--------------------------------------------------------------------
  *  Process "thawing" routines.
  *------------------------------------------------------------------*/
+long vmad_remap(cr_rstrt_proc_req_t *ctx, unsigned long from_addr,
+                unsigned long to_addr, unsigned long len) {
+    long r;
+    unsigned long new_addr;
+    unsigned long diff = (from_addr > to_addr) ? (from_addr - to_addr)
+                                               : (to_addr - from_addr);
+    if (diff < len) { /* Check for overlap case */
+        unsigned long tmp_addr;
+
+        tmp_addr = cr_mmap_pgoff(NULL, 0, len, PROT_NONE, MAP_PRIVATE|MAP_ANONYMOUS, 0);
+        r = (tmp_addr & (PAGE_SIZE-1));
+        if  (r) {
+            CR_ERR_CTX(ctx, "vmad_remap failed to allocate temporary %d", (int)r);
+            goto err;
+        }
+
+        new_addr = sys_mremap(from_addr, len, len, MREMAP_FIXED|MREMAP_MAYMOVE, tmp_addr);
+        if  (new_addr != tmp_addr) {
+            r = (new_addr & (PAGE_SIZE-1)) ? new_addr : -ENOMEM;
+            CR_ERR_CTX(ctx, "vmad_remap failed to use temporary %d", (int)r);
+            goto err;
+        }
+
+        from_addr = tmp_addr;
+    }
+
+    new_addr = sys_mremap(from_addr, len, len, MREMAP_FIXED|MREMAP_MAYMOVE, to_addr);
+    if (new_addr != to_addr) {
+        r = (new_addr & (PAGE_SIZE-1)) ? new_addr : -ENOMEM;
+        CR_ERR_CTX(ctx, "vmad_remap failed %d", (int)r);
+        goto err;
+    }
+
+    r = 0;
+err:
+    return r;
+}
+
 static
 int mmap_file(cr_rstrt_proc_req_t *ctx,
 	      const struct vmadump_vma_header *head, char *filename,
@@ -665,12 +747,12 @@ int mmap_file(cr_rstrt_proc_req_t *ctx,
     }
 
     down_write(&current->mm->mmap_sem);
-    mapaddr = do_mmap(file, head->start, head->end - head->start,
-		     prot, flags, head->offset);
+    mapaddr = cr_mmap_pgoff(file, head->start, head->end - head->start,
+			    prot, flags, head->pgoff);
     up_write(&current->mm->mmap_sem);
     fput(file);
     if (mapaddr != head->start)
-	CR_ERR_CTX(ctx, "do_mmap(<file>, %p, %p, ...) failed: %p",
+	CR_ERR_CTX(ctx, "mmap(<file>, %p, %p, ...) failed: %p",
 	       (void *) head->start, (void *) (head->end-head->start),
 	       (void *) mapaddr);
     return (mapaddr == head->start) ? 0 : mapaddr;
@@ -683,7 +765,7 @@ int mmap_file(cr_rstrt_proc_req_t *ctx,
  */
 static long
 load_page_list_header(cr_rstrt_proc_req_t * ctx, struct file *file,
-                      void *buf, unsigned int *buf_len)
+                      void *buf, unsigned int *buf_len, int *use_directio)
 {
     struct vmadump_page_list_header header;
     long bytes = 0;
@@ -693,6 +775,15 @@ load_page_list_header(cr_rstrt_proc_req_t * ctx, struct file *file,
     r = read_kern(ctx, file, &header, sizeof(header));
     if (r != sizeof(header)) goto err;
     bytes += r;
+
+    /* determine if O_DIRECT should be used to read this pages */
+    if (header.fill == PAGE_SIZE) {
+	/* PAGE_SIZE means directio was NOT used at checkpoint time */
+	use_directio = 0;
+	header.fill = 0;
+    } else {
+	*use_directio = directio_avail(file);
+    }
 
     /* now read in the padding if too small to fit page headers */
     if (!header.fill) {
@@ -722,9 +813,9 @@ err:
  */
 long load_page_chunks(cr_rstrt_proc_req_t * ctx, struct file *file,
                       struct vmadump_page_header *headers, int sizeof_headers,
-                      int is_exec)
+                      int is_exec, int use_directio)
 {
-    unsigned long old_filp_flags;
+    unsigned long old_filp_flags = 0;
     long r = 1;
     const int max_chunks = sizeof_headers/sizeof(*headers);
     int i;
@@ -734,11 +825,12 @@ long load_page_chunks(cr_rstrt_proc_req_t * ctx, struct file *file,
     if (r != sizeof_headers) { goto bad_read; }
 
     /* spin up direct IO */
-    old_filp_flags = directio_start(file);
+    if (use_directio)
+	old_filp_flags = directio_start(file);
 
     /* load each chunk */
     for (i = 0; i < max_chunks; ++i) {
-        const long len = headers[i].num_pages << PAGE_SHIFT;
+        const long len = (long)headers[i].num_pages << PAGE_SHIFT;
         const unsigned long page_start = headers[i].start;
 
         if (page_start == VMAD_END_OF_CHUNKS) {
@@ -754,7 +846,8 @@ long load_page_chunks(cr_rstrt_proc_req_t * ctx, struct file *file,
     }
 
     /* disable direct IO */
-    directio_stop(file, old_filp_flags);
+    if (use_directio)
+	directio_stop(file, old_filp_flags);
 
     return r;
 
@@ -769,6 +862,7 @@ int vmadump_load_page_list(cr_rstrt_proc_req_t *ctx,
     struct vmadump_page_header *chunks;
     long r;
     unsigned int sizeof_chunks = VMAD_CHUNKHEADER_SIZE;
+    int use_directio = 0;
 
     chunks = (struct vmadump_page_header *) kmalloc(sizeof_chunks, GFP_KERNEL);
     if (chunks == NULL) {
@@ -777,12 +871,12 @@ int vmadump_load_page_list(cr_rstrt_proc_req_t *ctx,
     }
 
     /* handle alignment padding - either skip it or use it for first batch of chunks */
-    r = load_page_list_header(ctx, file, chunks, &sizeof_chunks);
+    r = load_page_list_header(ctx, file, chunks, &sizeof_chunks, &use_directio);
     if (r < 0) { goto out_free; }
 
     /* now load all the page chunks */
     do {
-        r = load_page_chunks(ctx, file, chunks, sizeof_chunks, is_exec);
+        r = load_page_chunks(ctx, file, chunks, sizeof_chunks, is_exec, use_directio);
         if (r < 0) { goto out_free; }
         sizeof_chunks = VMAD_CHUNKHEADER_SIZE; /* After the first, all chunk arrays are this size */
     } while (r > 0);
@@ -814,7 +908,9 @@ int load_map(cr_rstrt_proc_req_t *ctx,
     if (head->flags & VM_WRITE) mmap_prot |= PROT_WRITE;
     if (head->flags & VM_EXEC)  mmap_prot |= PROT_EXEC;
     if (head->flags & VM_GROWSDOWN) mmap_flags |= MAP_GROWSDOWN;
+#ifdef VM_EXECUTABLE
     if (head->flags & VM_EXECUTABLE) mmap_flags |= MAP_EXECUTABLE;
+#endif
     if (head->flags & VM_DENYWRITE) mmap_flags |= MAP_DENYWRITE;
 
     if (head->namelen > 0) {
@@ -845,13 +941,19 @@ int load_map(cr_rstrt_proc_req_t *ctx,
     } else {
 	/* Load the data from the dump file */
 	down_write(&current->mm->mmap_sem);
-	addr = do_mmap(0, head->start, head->end - head->start,
-		       mmap_prot|PROT_WRITE, mmap_flags, 0);
+	addr = cr_mmap_pgoff(0, head->start, head->end - head->start,
+			     mmap_prot|PROT_WRITE, mmap_flags, 0);
 	up_write(&current->mm->mmap_sem);
 	if (addr != head->start) {
-	    CR_ERR_CTX(ctx, "do_mmap(0, %08lx, %08lx, ...) = 0x%08lx (failed)",
+	    CR_ERR_CTX(ctx, "mmap(0, %08lx, %08lx, ...) = 0x%08lx (failed)",
 		   head->start, head->end - head->start, addr);
-	    return -EINVAL;
+            if ((addr != head->start) && IS_ERR((void *) addr)) {
+                r = PTR_ERR((void *) addr);
+            } else {
+                r = -EINVAL;
+            }
+
+	    return r;
 	}
     }
 
@@ -919,6 +1021,7 @@ int vmadump_load_sigpending(cr_rstrt_proc_req_t *ctx, struct file *file,
 enum vmad_prctl_type {
    vmad_prctl_int_ref,  /* integer read by reference, written by value*/
    vmad_prctl_int_val,  /* integer read and written by value */
+   vmad_prctl_bool,     /* integer read and written by value, write must be 0 or 1 */
    vmad_prctl_comm,     /* string of length TASK_COMM_LEN, set by reference */
 };
 
@@ -936,6 +1039,7 @@ int vmadump_load_prctl(cr_rstrt_proc_req_t *ctx, struct file *file) {
     if (r != sizeof(header)) goto bad_read;
     while (header.option) { /* option==0 is end of the list */
         switch (header.type) {
+        case vmad_prctl_bool:
         case vmad_prctl_int_val:
         case vmad_prctl_int_ref: {
             unsigned int value;
@@ -1089,7 +1193,7 @@ long vmadump_thaw_proc(cr_rstrt_proc_req_t *ctx,
 
     r = vmadump_load_sigpending(ctx, file, &current->pending, 0);
     if (r < 0) goto bad_read;
-    if ((atomic_read(&current->signal->count) == 1) || !(flags & VMAD_DUMP_REGSONLY)) {
+    if (!(flags & VMAD_DUMP_REGSONLY)) {
 	/* Restore shared queue if not actually shared, or if we are the "leader" */
 	r = vmadump_load_sigpending(ctx, file, &current->signal->shared_pending, 1);
 	if (r < 0) goto bad_read;
@@ -1138,10 +1242,14 @@ long vmadump_thaw_proc(cr_rstrt_proc_req_t *ctx,
      * to reset TIF_32BIT when unmapping the pages, otherwise do_munmap
      * enters an infinite loop!
      */
-    #if !defined(TIF_32BIT) && defined(TIF_IA32)
-      #define TIF_32BIT TIF_IA32
+    #if defined(TIF_ADDR32)
+      /* Nothing to do here */
+    #elif defined(TIF_32BIT)
+      #define TIF_ADDR32 TIF_32BIT
+    #elif defined(TIF_IA32)
+      #define TIF_ADDR32 TIF_IA32
     #endif
-    int fiddle_tif_32bit = test_thread_flag(TIF_32BIT) && (orig_personality != PER_LINUX32);
+    int fiddle_tif_addr32 = test_thread_flag(TIF_ADDR32) && (orig_personality != PER_LINUX32);
 #endif
     
     mm = current->mm;
@@ -1155,8 +1263,8 @@ long vmadump_thaw_proc(cr_rstrt_proc_req_t *ctx,
 #endif
 
 #if BITS_PER_LONG == 64
-    if (fiddle_tif_32bit) {
-	clear_thread_flag(TIF_32BIT);
+    if (fiddle_tif_addr32) {
+	clear_thread_flag(TIF_ADDR32);
     }
 #endif
 
@@ -1165,9 +1273,14 @@ long vmadump_thaw_proc(cr_rstrt_proc_req_t *ctx,
     while(mm->mmap) {
 	map = mm->mmap;
 	map_count = mm->map_count;
+	if (map->vm_start >= TASK_SIZE) {
+	    /* a special high mapping - leave it in place */
+	    BUG_ON(map->vm_next);
+	    break;
+	}
 	r = do_munmap(mm, map->vm_start, map->vm_end - map->vm_start);
 	if (r) {
-	    CR_ERR_CTX(ctx, "do_munmap(%lu, %lu) = %d",
+	    CR_ERR_CTX(ctx, "do_munmap(%lx, %lx) = %d",
 		   map->vm_start, map->vm_end-map->vm_start, (int)r);
 	}
 	if (map_count == mm->map_count) {
@@ -1178,8 +1291,8 @@ long vmadump_thaw_proc(cr_rstrt_proc_req_t *ctx,
     }
 
 #if BITS_PER_LONG == 64
-    if (fiddle_tif_32bit) {
-        set_thread_flag(TIF_32BIT);
+    if (fiddle_tif_addr32) {
+        set_thread_flag(TIF_ADDR32);
     }
 #endif
 
@@ -1384,17 +1497,21 @@ int addr_nonzero(struct mm_struct *mm, unsigned long addr) {
  * "fill", and returns that value in *buf_len.
  * ONLY if "fill" is smaller than VMAD_CHUNKHEADER_MIN bytes is
  * the corresponding padding written here.
+ * A "fill" of PAGE_SIZE means we are NOT going to use O_DIRECT
  */
 static long 
 store_page_list_header(cr_chkpt_proc_req_t *ctx, struct file *file, 
-                       void *buf, unsigned int *buf_len)
+                       void *buf, unsigned int *buf_len, int *use_directio)
 {
     struct vmadump_page_list_header header;
     long bytes = 0;
     long r;
     unsigned int fill;
+    const int have_directio = directio_avail(file);
 
-    fill = PAGE_SIZE - ((file->f_pos + sizeof(header)) & (PAGE_SIZE - 1));
+    fill = have_directio
+	? PAGE_SIZE - ((file->f_pos + sizeof(header)) & (PAGE_SIZE - 1))
+	: PAGE_SIZE;
 
     header.fill = fill;
     r = write_kern(ctx, file, &header, sizeof(header));
@@ -1402,7 +1519,7 @@ store_page_list_header(cr_chkpt_proc_req_t *ctx, struct file *file,
         goto bad_write;
     bytes += r;
 
-    if (!fill) {
+    if (!fill || (fill == PAGE_SIZE)) {
         /* no padding at all */
     } else if (fill < VMAD_CHUNKHEADER_MIN) {
         /* TODO: seek when possible? */
@@ -1415,6 +1532,7 @@ store_page_list_header(cr_chkpt_proc_req_t *ctx, struct file *file,
         *buf_len = fill;
     }
 
+    *use_directio = have_directio;
     return bytes;
 
 bad_write:
@@ -1429,9 +1547,9 @@ bad_write:
 static 
 long store_page_chunks(cr_chkpt_proc_req_t *ctx, struct file *file,
 		      struct vmadump_page_header *headers,
-		      int sizeof_headers)
+		      int sizeof_headers, int use_directio)
 {
-    unsigned long old_filp_flags;
+    unsigned long old_filp_flags = 0;
     unsigned long chunk_start;
     long r, bytes = 0;
     int i;
@@ -1446,13 +1564,13 @@ long store_page_chunks(cr_chkpt_proc_req_t *ctx, struct file *file,
     if (headers[0].start == VMAD_END_OF_CHUNKS) goto empty;
 
     /*
-     * This routine attempts to set up direct IO for the chunk writes.
-     * If direct IO is not available, it does nothing.
+     * attempt to set up direct IO for the chunk writes.
      */
-    old_filp_flags = directio_start(file);
+    if (use_directio)
+	old_filp_flags = directio_start(file);
 
     for (i=0; i<num_headers; ++i) {
-	const long len = headers[i].num_pages << PAGE_SHIFT;
+	const long len = (long)headers[i].num_pages << PAGE_SHIFT;
 
 	chunk_start = headers[i].start;
 
@@ -1466,7 +1584,8 @@ long store_page_chunks(cr_chkpt_proc_req_t *ctx, struct file *file,
 	bytes += r;
     }
 
-    directio_stop(file, old_filp_flags);
+    if (use_directio)
+	directio_stop(file, old_filp_flags);
 
 empty:
     return bytes;
@@ -1490,7 +1609,8 @@ bad_write:
 static inline loff_t
 write_chunk(cr_chkpt_proc_req_t *ctx, struct file *file,
              struct vmadump_page_header *chunks, unsigned int *sizeof_chunks,
-             int *chunk_number, unsigned long start, unsigned long num_pages)
+             int *chunk_number, unsigned long start, unsigned long num_pages,
+             int use_directio)
 {
     long r = 0;
 
@@ -1505,7 +1625,7 @@ write_chunk(cr_chkpt_proc_req_t *ctx, struct file *file,
 
         /* Write the array if full or finished */
         if (((index + 1) >= max_chunks) || (start == VMAD_END_OF_CHUNKS)) {
-            r = store_page_chunks(ctx, file, chunks, *sizeof_chunks);
+            r = store_page_chunks(ctx, file, chunks, *sizeof_chunks, use_directio);
             *sizeof_chunks = VMAD_CHUNKHEADER_SIZE;
             *chunk_number = 0;
         }
@@ -1531,6 +1651,7 @@ store_page_list(cr_chkpt_proc_req_t * ctx, struct file *file,
     struct vmadump_page_header *chunks;
     int chunk_number;
     unsigned int sizeof_chunks = VMAD_CHUNKHEADER_SIZE;
+    int use_directio = 0;
 
     /* A page 'chunk' is a contiguous range of pages in virtual memory.
      * 
@@ -1552,7 +1673,7 @@ store_page_list(cr_chkpt_proc_req_t * ctx, struct file *file,
      * The "fill" required to acheive alignment is used for the first array of chunks
      * if large enough.  Otherwise it is written as zeros for padding.
      */
-    r = store_page_list_header(ctx, file, chunks, &sizeof_chunks);
+    r = store_page_list_header(ctx, file, chunks, &sizeof_chunks, &use_directio);
     if (r < 0) {
         goto out_kfree;
     }
@@ -1578,7 +1699,8 @@ store_page_list(cr_chkpt_proc_req_t * ctx, struct file *file,
             } else {
                 r = write_chunk(ctx, file, chunks,
                                 &sizeof_chunks, &chunk_number,
-                                chunk_start, num_contig_pages);
+                                chunk_start, num_contig_pages,
+                                use_directio);
                 if (r < 0) goto out_io;
                 bytes += r;
 
@@ -1595,7 +1717,8 @@ store_page_list(cr_chkpt_proc_req_t * ctx, struct file *file,
     /* store the last chunk */
     r = write_chunk(ctx, file, chunks,
                     &sizeof_chunks, &chunk_number,
-                    chunk_start, num_contig_pages);
+                    chunk_start, num_contig_pages,
+                    use_directio);
     if (r < 0) goto out_io;
     bytes += r;
 
@@ -1603,7 +1726,7 @@ store_page_list(cr_chkpt_proc_req_t * ctx, struct file *file,
      * which should force writting of the chunks array */
     r = write_chunk(ctx, file, chunks,
                     &sizeof_chunks, &chunk_number,
-                    VMAD_END_OF_CHUNKS, 0);
+                    VMAD_END_OF_CHUNKS, 0, use_directio);
     if (r < 0) goto out_io;
     if (r == 0) {
         /* This absolutely should not happen.  At the very least an EOF
@@ -1649,16 +1772,18 @@ loff_t store_map(cr_chkpt_proc_req_t *ctx, struct file *file,
     if (r) return r;
 #endif
 
+    /* Never store a VM_IO region */
+    if (map->vm_flags & VM_IO) { return 0; }
+
     head.start   = map->vm_start;
     head.end     = map->vm_end;
     head.flags   = map->vm_flags;
     head.namelen = 0;
-    head.offset  = map->vm_pgoff << PAGE_SHIFT; /* XXX LFS! */
+    head.pgoff   = map->vm_pgoff;
 
     /* Decide Whether or not we're gonna store the map's contents or
      * a reference to the file they came from */
     if (map->vm_file) {
-	unsigned short vmflags = map->vm_flags;
 	buffer = (char *) __get_free_page(GFP_KERNEL);
 	if (!buffer) { return -ENOMEM; }
 #if 0 /* Not supported in BLCR */
@@ -1669,18 +1794,14 @@ loff_t store_map(cr_chkpt_proc_req_t *ctx, struct file *file,
 	    filename = default_map_name(map->vm_file, buffer, PAGE_SIZE);
 	head.namelen = strlen(filename);
 
-	if (vmflags & VM_IO) {
-	    /* Region is an IO map. */
-
-	    /* Never store the contents of a VM_IO region */
-	} else if (vmad_is_special_mmap(map, flags)) {
+	if (vmad_is_special_mmap(map, flags)) {
 		/* Let BLCR deal with it */
 		free_page((long)buffer);
 		return 0;
 	} else if (vmad_dentry_unlinked(map->vm_file->f_dentry)) {
 	    /* Region is an unlinked file - store contents, not filename */
 	    head.namelen = 0;
-	} else if (vmflags & VM_EXECUTABLE) {
+	} else if (vmad_is_exe(map)) {
 	    /* Region is an executable */
 	    if (flags & VMAD_DUMP_EXEC)
 		head.namelen = 0;
@@ -1833,13 +1954,13 @@ int vmadump_store_prctl(cr_chkpt_proc_req_t *ctx, struct file *file) {
         {vmad_prctl_int_ref, PR_GET_PDEATHSIG, PR_SET_PDEATHSIG},
     #endif
     #if defined(PR_GET_DUMPABLE)
-        {vmad_prctl_int_val, PR_GET_DUMPABLE, PR_SET_DUMPABLE},
+        {vmad_prctl_bool, PR_GET_DUMPABLE, PR_SET_DUMPABLE},
     #endif
     #if defined(PR_GET_UNALIGN) && defined(GET_UNALIGN_CTL)
         {vmad_prctl_int_ref, PR_GET_UNALIGN, PR_SET_UNALIGN},
     #endif
     #if defined(PR_GET_KEEPCAPS)
-        {vmad_prctl_int_val, PR_GET_KEEPCAPS, PR_SET_KEEPCAPS},
+        {vmad_prctl_bool, PR_GET_KEEPCAPS, PR_SET_KEEPCAPS},
     #endif
     #if defined(PR_GET_FPEMU) && defined(GET_FPEMU_CTL)
         {vmad_prctl_int_ref, PR_GET_FPEMU, PR_SET_FPEMU},
@@ -1898,7 +2019,15 @@ int vmadump_store_prctl(cr_chkpt_proc_req_t *ctx, struct file *file) {
         const int get = vmad_prctl_tbl[i].get_option;
         const int set = vmad_prctl_tbl[i].set_option;
 
-        switch (vmad_prctl_tbl[i].type) {
+        switch (type) {
+        case vmad_prctl_bool:
+            r = vmadump_prctl_v(get, 0);
+            if (!IS_ERR((void *)r)) { /* ICK */
+                value = r ? 1 : 0;
+                r = 0;
+            }
+            break;
+
         case vmad_prctl_int_val:
             r = vmadump_prctl_v(get, 0);
             if (!IS_ERR((void *)r)) { /* ICK */
@@ -1996,7 +2125,7 @@ loff_t vmadump_freeze_proc(cr_chkpt_proc_req_t *ctx, struct file *file,
     r = vmadump_store_sigpending(ctx, file, &current->pending);
     if (r < 0) goto err;
     bytes += r;
-    if ((atomic_read(&current->signal->count) == 1) || !(flags & VMAD_DUMP_REGSONLY)) {
+    if (!(flags & VMAD_DUMP_REGSONLY)) {
 	/* Dump shared queue if not actually shared, or if we are the "leader" */
 	r = vmadump_store_sigpending(ctx, file, &current->signal->shared_pending);
 	if (r < 0) goto err;

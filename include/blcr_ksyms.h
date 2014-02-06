@@ -22,7 +22,7 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
- * $Id: blcr_ksyms.h,v 1.18 2008/12/02 00:17:42 phargrov Exp $
+ * $Id: blcr_ksyms.h,v 1.18.8.4 2012/12/23 04:36:35 phargrov Exp $
  */
 
 #ifndef _CR_KSYMS_H
@@ -55,7 +55,11 @@
 
 #if defined(__i386__) || defined(__x86_64__)
   #ifdef CONFIG_RELOCATABLE
-    #define _CR_RELOC_KSYM(_addr) (_addr - CR_EXPORTED_KCODE_register_chrdev + register_chrdev)
+    #ifndef CR_EXPORTED_KCODE___register_chrdev
+      #define _CR_RELOC_KSYM(_addr) (_addr - CR_EXPORTED_KCODE_register_chrdev + register_chrdev)
+    #else
+      #define _CR_RELOC_KSYM(_addr) (_addr - CR_EXPORTED_KCODE___register_chrdev + __register_chrdev)
+    #endif
   #else
     #define _CR_RELOC_KSYM(_addr) _addr
   #endif

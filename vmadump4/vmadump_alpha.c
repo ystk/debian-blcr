@@ -17,11 +17,13 @@
  *  along with this program; if not, write to the Free Software
  *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
- * $Id: vmadump_alpha.c,v 1.6 2008/06/03 04:12:38 phargrov Exp $
+ * $Id: vmadump_alpha.c,v 1.6.16.1 2010/08/12 21:58:35 phargrov Exp $
  *-----------------------------------------------------------------------*/
 #define __NO_VERSION__
 
+#ifdef CR_NEED_AUTOCONF_H
 #include <linux/autoconf.h>
+#endif
 #if defined(CONFIG_SMP) && ! defined(__SMP__)
 #define __SMP__
 #endif

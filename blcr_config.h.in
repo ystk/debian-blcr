@@ -2,7 +2,7 @@
 
 /*
  *  Berkeley Lab Checkpoint/Restart (BLCR) for Linux is Copyright (c)
- *  2008, The Regents of the University of California, through Lawrence
+ *  2012, The Regents of the University of California, through Lawrence
  *  Berkeley National Laboratory (subject to receipt of any required
  *  approvals from the U.S. Dept. of Energy).  All rights reserved.
  *
@@ -48,8 +48,11 @@
 /* Computed value of 'CR_OP_HAND_CHKPT' */
 #undef CR_ASM_OP_HAND_CHKPT
 
-/* Computed value of 'offsetof(struct siginfo, si_pid)' */
+/* Computed value of 'offsetof(siginfo_t, si_pid)' */
 #undef CR_ASM_SI_PID_OFFSET
+
+/* Define to address of exported kernel symbol __register_chrdev */
+#undef CR_EXPORTED_KCODE___register_chrdev
 
 /* Define to address of exported kernel symbol register_blkdev */
 #undef CR_EXPORTED_KCODE_register_blkdev
@@ -57,11 +60,21 @@
 /* Define to address of exported kernel symbol register_chrdev */
 #undef CR_EXPORTED_KCODE_register_chrdev
 
+/* Computed value of 'F_GETPIPE_SZ' */
+#undef CR_F_GETPIPE_SZ
+
+/* Computed value of 'F_SETPIPE_SZ' */
+#undef CR_F_SETPIPE_SZ
+
 /* Define to 1 if work around for bug 2524 is requested. */
 #undef CR_HAVE_BUG2524
 
 /* Define to the proper incantation for inline functions */
 #undef CR_INLINE
+
+/* Define to address of non-exported kernel symbol __audit_syscall_exit, or 0
+   if exported */
+#undef CR_KCODE___audit_syscall_exit
 
 /* Define to address of non-exported kernel symbol __flush_icache_range, or 0
    if exported */
@@ -103,6 +116,10 @@
    exported */
 #undef CR_KCODE_attach_pid
 
+/* Define to address of non-exported kernel symbol audit_syscall_exit, or 0 if
+   exported */
+#undef CR_KCODE_audit_syscall_exit
+
 /* Define to address of non-exported kernel symbol change_pid, or 0 if
    exported */
 #undef CR_KCODE_change_pid
@@ -118,6 +135,18 @@
 /* Define to address of non-exported kernel symbol detach_pid, or 0 if
    exported */
 #undef CR_KCODE_detach_pid
+
+/* Define to address of non-exported kernel symbol do_mmap, or 0 if exported
+   */
+#undef CR_KCODE_do_mmap
+
+/* Define to address of non-exported kernel symbol do_mmap_pgoff, or 0 if
+   exported */
+#undef CR_KCODE_do_mmap_pgoff
+
+/* Define to address of non-exported kernel symbol do_munmap, or 0 if exported
+   */
+#undef CR_KCODE_do_munmap
 
 /* Define to address of non-exported kernel symbol do_pipe, or 0 if exported
    */
@@ -142,6 +171,10 @@
 /* Define to address of non-exported kernel symbol find_pid, or 0 if exported
    */
 #undef CR_KCODE_find_pid
+
+/* Define to address of non-exported kernel symbol find_task_by_pid_ns, or 0
+   if exported */
+#undef CR_KCODE_find_task_by_pid_ns
 
 /* Define to address of non-exported kernel symbol follow_huge_addr, or 0 if
    exported */
@@ -195,13 +228,13 @@
    exported */
 #undef CR_KCODE_load_gs_index
 
-/* Define to address of non-exported kernel symbol lookup_create, or 0 if
-   exported */
-#undef CR_KCODE_lookup_create
-
 /* Define to address of non-exported kernel symbol map_vsyscall, or 0 if
    exported */
 #undef CR_KCODE_map_vsyscall
+
+/* Define to address of non-exported kernel symbol pipe_fcntl, or 0 if
+   exported */
+#undef CR_KCODE_pipe_fcntl
 
 /* Define to address of non-exported kernel symbol pmd_huge, or 0 if exported
    */
@@ -227,6 +260,10 @@
    */
 #undef CR_KCODE_sys_dup2
 
+/* Define to address of non-exported kernel symbol sys_fchmod, or 0 if
+   exported */
+#undef CR_KCODE_sys_fchmod
+
 /* Define to address of non-exported kernel symbol sys_ftruncate, or 0 if
    exported */
 #undef CR_KCODE_sys_ftruncate
@@ -238,6 +275,10 @@
 /* Define to address of non-exported kernel symbol sys_lseek, or 0 if exported
    */
 #undef CR_KCODE_sys_lseek
+
+/* Define to address of non-exported kernel symbol sys_mknod, or 0 if exported
+   */
+#undef CR_KCODE_sys_mknod
 
 /* Define to address of non-exported kernel symbol sys_mprotect, or 0 if
    exported */
@@ -271,6 +312,10 @@
    exported */
 #undef CR_KCODE_sys_setresuid
 
+/* Define to address of non-exported kernel symbol sys_unlink, or 0 if
+   exported */
+#undef CR_KCODE_sys_unlink
+
 /* Define to address of non-exported kernel symbol syscall32_setup_pages, or 0
    if exported */
 #undef CR_KCODE_syscall32_setup_pages
@@ -278,6 +323,10 @@
 /* Define to address of non-exported kernel symbol timeval_to_jiffies, or 0 if
    exported */
 #undef CR_KCODE_timeval_to_jiffies
+
+/* Define to address of non-exported kernel symbol vectors_user_mapping, or 0
+   if exported */
+#undef CR_KCODE_vectors_user_mapping
 
 /* Define to address of non-exported kernel symbol HPAGE_SHIFT, or 0 if
    exported */
@@ -318,6 +367,10 @@
 /* Define to address of non-exported kernel symbol mem_map_zero, or 0 if
    exported */
 #undef CR_KDATA_mem_map_zero
+
+/* Define to address of non-exported kernel symbol old_rsp, or 0 if exported
+   */
+#undef CR_KDATA_old_rsp
 
 /* Define to address of non-exported kernel symbol per_cpu__cpu_gdt_descr, or
    0 if exported */
@@ -382,6 +435,9 @@
 /* Maximum legal size to kmalloc() */
 #undef CR_KMALLOC_MAX
 
+/* Define to 1 if linux/autoconf.h must be included explicitly */
+#undef CR_NEED_AUTOCONF_H
+
 /* Define to 1 to enable restore of uid, gid and supplemental groups when
    invoked by root. (default is no) */
 #undef CR_RESTORE_IDS
@@ -408,6 +464,14 @@
    type 'int'. */
 #undef HAVE_2_6_0_TASK_IDS
 
+/* Define to 1 if the kernel has "
+   audit_syscall_exit(NULL,AUDITSC_RESULT(0),0)". */
+#undef HAVE_2_6_12_AUDIT_SYSCALL_EXIT
+
+/* Define to 1 if the kernel has " audit_syscall_exit(AUDITSC_RESULT(0),0)".
+   */
+#undef HAVE_2_6_17_AUDIT_SYSCALL_EXIT
+
 /* Define to 1 if the kernel has "int process_session(NULL)". */
 #undef HAVE_2_6_20_TASK_IDS
 
@@ -423,6 +487,9 @@
 /* Define to 1 if the kernel has 2.6.28 restore_fpu_checking. */
 #undef HAVE_2_6_28_RESTORE_FPU_CHECKING
 
+/* Define to 1 if the kernel has " audit_syscall_exit(NULL,0)". */
+#undef HAVE_2_6_6_AUDIT_SYSCALL_EXIT
+
 /* Define to 1 if the kernel type 'struct task_struct' has member
    'signal->session' of type 'int'. */
 #undef HAVE_2_6_6_TASK_IDS
@@ -433,29 +500,23 @@
 /* Define to 1 if the kernel has 2-arg find_pid(). */
 #undef HAVE_2_ARG_FIND_PID
 
-/* Define to 1 if the kernel has 2-arg notify_change(). */
-#undef HAVE_2_ARG_NOTIFY_CHANGE
-
 /* Define to 1 if the kernel has 2-arg pipe_ops.unmap. */
 #undef HAVE_2_ARG_PIPE_OPS_UNMAP
 
-/* Define to 1 if the kernel has 2-arg vfs_unlink(). */
-#undef HAVE_2_ARG_VFS_UNLINK
+/* Define to 1 if the kernel has 3-arg dentry_open(). */
+#undef HAVE_3_ARG_DENTRY_OPEN
 
 /* Define to 1 if the kernel has 3-arg follow_huge_addr(). */
 #undef HAVE_3_ARG_FOLLOW_HUGE_ADDR
 
-/* Define to 1 if the kernel has 3-arg notify_change(). */
-#undef HAVE_3_ARG_NOTIFY_CHANGE
-
 /* Define to 1 if the kernel has 3-arg pipe_ops.unmap. */
 #undef HAVE_3_ARG_PIPE_OPS_UNMAP
 
-/* Define to 1 if the kernel has 3-arg vfs_unlink(). */
-#undef HAVE_3_ARG_VFS_UNLINK
-
 /* Define to 1 if the kernel has 4-arg arch_setup_additional_pages(). */
 #undef HAVE_4_ARG_ARCH_SETUP_ADDITIONAL_PAGES
+
+/* Define to 1 if the kernel has 4-arg dentry_open(). */
+#undef HAVE_4_ARG_DENTRY_OPEN
 
 /* Define to 1 if the kernel has 4-arg do_generic_file_read(). */
 #undef HAVE_4_ARG_DO_GENERIC_FILE_READ
@@ -463,14 +524,8 @@
 /* Define to 1 if the kernel has 4-arg follow_huge_addr(). */
 #undef HAVE_4_ARG_FOLLOW_HUGE_ADDR
 
-/* Define to 1 if the kernel has 4-arg vfs_mknod(). */
-#undef HAVE_4_ARG_VFS_MKNOD
-
 /* Define to 1 if the kernel has 5-arg do_generic_file_read(). */
 #undef HAVE_5_ARG_DO_GENERIC_FILE_READ
-
-/* Define to 1 if the kernel has 5-arg vfs_mknod(). */
-#undef HAVE_5_ARG_VFS_MKNOD
 
 /* Define to 1 if the kernel has the macro or function alloc_pid(). */
 #undef HAVE_ALLOC_PID
@@ -484,8 +539,18 @@
 /* Define to 1 if the kernel has the <asm/i387.h> header file. */
 #undef HAVE_ASM_I387_H
 
+/* Define to 1 if the kernel has the <asm/switch_to.h> header file. */
+#undef HAVE_ASM_SWITCH_TO_H
+
+/* Define to 1 if the kernel has the <asm/tls.h> header file. */
+#undef HAVE_ASM_TLS_H
+
 /* Define to 1 if the kernel has the <asm/vsyscall32.h> header file. */
 #undef HAVE_ASM_VSYSCALL32_H
+
+/* Define to 1 if the kernel has the macro or function audit_dummy_context().
+   */
+#undef HAVE_AUDIT_DUMMY_CONTEXT
 
 /* Define to 1 if the kernel has the macro or function change_pid(). */
 #undef HAVE_CHANGE_PID
@@ -493,8 +558,17 @@
 /* Define to 1 if the kernel has the macro or function child_reaper(). */
 #undef HAVE_CHILD_REAPER
 
+/* Define to 1 if the kernel has the macro or function close_on_exec(). */
+#undef HAVE_CLOSE_ON_EXEC
+
+/* Define to 1 if the kernel defines the macro CONFIG_AUDITSYSCALL. */
+#undef HAVE_CONFIG_AUDITSYSCALL
+
 /* Define to 1 if the kernel defines the macro CONFIG_HUGETLBFS. */
 #undef HAVE_CONFIG_HUGETLBFS
+
+/* Define to 1 if the kernel defines the macro CONFIG_THUMB2_KERNEL. */
+#undef HAVE_CONFIG_THUMB2_KERNEL
 
 /* Define to 1 if the kernel has cpu_gdt_descr. */
 #undef HAVE_CPU_GDT_DESCR
@@ -508,9 +582,18 @@
 /* Define to 1 if the kernel defines the macro do_each_task_pid. */
 #undef HAVE_DO_EACH_TASK_PID
 
+/* Define to 1 if the kernel has the macro or function do_mmap(). */
+#undef HAVE_DO_MMAP
+
+/* Define to 1 if the kernel has the macro or function do_mmap_pgoff(). */
+#undef HAVE_DO_MMAP_PGOFF
+
 /* Define to 1 if the kernel type 'struct fdtable' has member 'next_fd' of
    type 'int'. */
 #undef HAVE_FDTABLE_NEXT_FD
+
+/* Define to 1 if the kernel has the macro or function fd_is_open(). */
+#undef HAVE_FD_IS_OPEN
 
 /* Define to 1 if the kernel type 'struct files_struct' has member 'max_fdset'
    of type 'int'. */
@@ -520,6 +603,10 @@
    of type 'int'. */
 #undef HAVE_FILES_STRUCT_NEXT_FD
 
+/* Define to 1 if the kernel type 'struct file' has member 'f_lock' of type
+   'spinlock_t'. */
+#undef HAVE_FILE_F_LOCK
+
 /* Define to 1 if the kernel type 'struct file' has member 'f_mapping' of type
    'struct address_space*'. */
 #undef HAVE_FILE_F_MAPPING
@@ -527,6 +614,10 @@
 /* Define to 1 if the kernel type 'struct file_operations' has member
    'check_flags'. */
 #undef HAVE_FILE_OPERATIONS_CHECK_FLAGS
+
+/* Define to 1 if the kernel type 'struct file_operations' has member
+   'unlocked_ioctl'. */
+#undef HAVE_FILE_OPERATIONS_UNLOCKED_IOCTL
 
 /* Define to 1 if the kernel has the macro or function find_pid_ns(). */
 #undef HAVE_FIND_PID_NS
@@ -549,8 +640,25 @@
 /* Define to 1 if the kernel defines the macro for_each_task_pid. */
 #undef HAVE_FOR_EACH_TASK_PID
 
+/* Define to 1 if the kernel type 'struct fs_struct' has member 'lock' of type
+   'rwlock_t'. */
+#undef HAVE_FS_STRUCT_RWLOCK
+
+/* Define to 1 if the kernel type 'struct fs_struct' has member 'lock' of type
+   'spinlock_t'. */
+#undef HAVE_FS_STRUCT_SPINLOCK
+
 /* Define to 1 if the Fault Tolerance Backplane is available. */
 #undef HAVE_FTB
+
+/* Define to 1 if the kernel defines the macro F_GETPIPE_SZ. */
+#undef HAVE_F_GETPIPE_SZ
+
+/* Define to 1 if the kernel defines the macro F_SETPIPE_SZ. */
+#undef HAVE_F_SETPIPE_SZ
+
+/* Define to 1 if the kernel has the <generated/utsrelease.h> header file. */
+#undef HAVE_GENERATED_UTSRELEASE_H
 
 /* Define to 1 if the kernel has the type 'gfp_t'. */
 #undef HAVE_GFP_T
@@ -576,6 +684,9 @@
 /* Define to 1 if you have the <inttypes.h> header file. */
 #undef HAVE_INTTYPES_H
 
+/* Define to 1 if the kernel has the macro or function kern_path(). */
+#undef HAVE_KERN_PATH
+
 /* Define to 1 if the kernel has the macro or function kill_pid(). */
 #undef HAVE_KILL_PID
 
@@ -594,6 +705,9 @@
 /* Define to 1 if the kernel has the macro or function kzalloc(). */
 #undef HAVE_KZALLOC
 
+/* Define to 1 if the kernel has the <linux/audit.h> header file. */
+#undef HAVE_LINUX_AUDIT_H
+
 /* Define to 1 if the kernel has the <linux/compile.h> header file. */
 #undef HAVE_LINUX_COMPILE_H
 
@@ -602,6 +716,9 @@
 
 /* Define to 1 if the kernel has the <linux/lockdep.h> header file. */
 #undef HAVE_LINUX_LOCKDEP_H
+
+/* Define to 1 if the kernel has the <linux/perf_event.h> header file. */
+#undef HAVE_LINUX_PERF_EVENT_H
 
 /* Define to 1 if the kernel has the <linux/pid_namespace.h> header file. */
 #undef HAVE_LINUX_PID_NAMESPACE_H
@@ -614,6 +731,9 @@
 
 /* Define to 1 if the kernel has the <linux/utrace.h> header file. */
 #undef HAVE_LINUX_UTRACE_H
+
+/* Define to 1 if the kernel has the <linux/utsrelease.h> header file. */
+#undef HAVE_LINUX_UTSRELEASE_H
 
 /* Define to 1 if the kernel has the macro or function map_vsyscall(). */
 #undef HAVE_MAP_VSYSCALL
@@ -637,6 +757,10 @@
    type 'int'. */
 #undef HAVE_MM_DUMPABLE
 
+/* Define to 1 if the kernel type 'struct mm_struct' has member 'exe_file' of
+   type 'struct file *'. */
+#undef HAVE_MM_EXE_FILE
+
 /* Define to 1 if the kernel type 'struct mm_struct' has member 'mmap_base' of
    type 'unsigned long'. */
 #undef HAVE_MM_MMAP_BASE
@@ -651,8 +775,15 @@
 /* Define to 1 if fs functions pass 'struct path' */
 #undef HAVE_NAMEIDATA_PATH
 
+/* Define to 1 if the kernel type 'struct files_struct' has member
+   'open_fds->fds_bits' of type 'unsigned long *'. */
+#undef HAVE_OPEN_FDS_FDS_BITS
+
 /* Define to 1 if the kernel has the macro or function PageAnon(). */
 #undef HAVE_PAGEANON
+
+/* Define to 1 if the kernel has the macro or function path_lookup(). */
+#undef HAVE_PATH_LOOKUP
 
 /* Define to 1 if the kernel has the macro or function percpu_read(). */
 #undef HAVE_PERCPU_READ
@@ -674,9 +805,16 @@
    'pin'. */
 #undef HAVE_PIPE_BUF_OPERATIONS_PIN
 
+/* Define to 1 if the kernel has the macro or function pipe_fcntl(). */
+#undef HAVE_PIPE_FCNTL
+
 /* Define to 1 if the kernel type 'struct pipe_inode_info' has member 'base'
    of type 'char*'. */
 #undef HAVE_PIPE_INODE_INFO_BASE
+
+/* Define to 1 if the kernel type 'struct pipe_inode_info' has member
+   'buffers' of type 'unsigned int'. */
+#undef HAVE_PIPE_INODE_INFO_BUFFERS
 
 /* Define to 1 if prctl() function is available. */
 #undef HAVE_PRCTL
@@ -840,6 +978,12 @@
    'thread_group' of type 'struct list_head'. */
 #undef HAVE_TASK_THREAD_GROUP
 
+/* Define to 1 if the kernel has the macro or function this_cpu_read(). */
+#undef HAVE_THIS_CPU_READ
+
+/* Define to 1 if the kernel has the macro or function this_cpu_write(). */
+#undef HAVE_THIS_CPU_WRITE
+
 /* Define to 1 if the kernel type 'struct thread_struct' has member
    'debugreg0' of type 'unsigned long'. */
 #undef HAVE_THREAD_DEBUGREG0
@@ -852,6 +996,10 @@
    type 'unsigned long'. */
 #undef HAVE_THREAD_ESP0
 
+/* Define to 1 if the kernel type 'struct thread_struct' has member 'fpu' of
+   type 'struct fpu'. */
+#undef HAVE_THREAD_FPU
+
 /* Define to 1 if the kernel type 'struct thread_struct' has member 'i387' of
    type 'union i387_union'. */
 #undef HAVE_THREAD_I387
@@ -863,6 +1011,10 @@
 /* Define to 1 if the kernel type 'struct thread_info' has member 'tp_value'
    of type 'unsigned long'. */
 #undef HAVE_THREAD_INFO_TP_VALUE
+
+/* Define to 1 if the kernel type 'struct thread_struct' has member
+   'ptrace_bps1' of type 'struct perf_event *'. */
+#undef HAVE_THREAD_PTRACE_BPS
 
 /* Define to 1 if the kernel type 'struct thread_struct' has member 'rsp0' of
    type 'unsigned long'. */
@@ -894,11 +1046,22 @@
 /* Define to 1 if the kernel has the macro or function valid_signal(). */
 #undef HAVE_VALID_SIGNAL
 
+/* Define to 1 if the kernel type 'struct vm_area_struct' has member 'vm_mm'
+   of type 'struct mm_struct *'. */
+#undef HAVE_VMA_VM_MM
+
 /* Define to 1 if the kernel defines the constant VSYSCALL_BASE. */
 #undef HAVE_VSYSCALL_BASE
 
 /* Define to 1 if the kernel has the macro or function write_pda(). */
 #undef HAVE_WRITE_PDA
+
+/* Define to 1 if the kernel has the macro or function __audit_syscall_exit().
+   */
+#undef HAVE___AUDIT_SYSCALL_EXIT
+
+/* Define to 1 if you have the `__nss_disable_nscd' function. */
+#undef HAVE___NSS_DISABLE_NSCD
 
 /* Define to 1 if the kernel has the macro or function __putname(). */
 #undef HAVE___PUTNAME
@@ -906,9 +1069,20 @@
 /* Define to 1 if you have the `__register_atfork' function. */
 #undef HAVE___REGISTER_ATFORK
 
+/* Define to 1 if the kernel has the macro or function __set_close_on_exec().
+   */
+#undef HAVE___SET_CLOSE_ON_EXEC
+
+/* Define to 1 if the kernel has the macro or function __set_open_fd(). */
+#undef HAVE___SET_OPEN_FD
+
 /* Define to 1 to enable debugging/tracing output from libcr, controlled by
    the 'LIBCR_TRACE_MASK' environment variable */
 #undef LIBCR_TRACING
+
+/* Define to the sub-directory in which libtool stores uninstalled libraries.
+   */
+#undef LT_OBJDIR
 
 /* Name of package */
 #undef PACKAGE
@@ -928,7 +1102,7 @@
 /* Define to the version of this package. */
 #undef PACKAGE_VERSION
 
-/* The size of a `void *', as computed by sizeof. */
+/* The size of `void *', as computed by sizeof. */
 #undef SIZEOF_VOID_P
 
 /* Define to 1 if you have the ANSI C header files. */
