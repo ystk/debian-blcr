@@ -21,7 +21,7 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
- * $Id: cr_io.c,v 1.77.4.2 2009/03/26 04:22:43 phargrov Exp $
+ * $Id: cr_io.c,v 1.77.4.6 2013/01/04 04:21:24 phargrov Exp $
  */
 
 /*
@@ -39,32 +39,6 @@
   #include <linux/random.h>
   unsigned int cr_read_fault_rate = 0;
   unsigned int cr_write_fault_rate = 0;
-#endif
-
-/* Thin wrappers for args added over time: */
-
-#if HAVE_4_ARG_VFS_MKNOD
-  #define cr_vfs_mknod(_i,_d,_v,_m,_dev) vfs_mknod((_i),(_d),(_m),(_dev))
-#elif HAVE_5_ARG_VFS_MKNOD
-  #define cr_vfs_mknod(_i,_d,_v,_m,_dev) vfs_mknod((_i),(_d),(_v),(_m),(_dev))
-#else
-  #error "Don't know how to call vfs_mknod()"
-#endif
-
-#if HAVE_2_ARG_VFS_UNLINK
-  #define cr_vfs_unlink(_i,_d,_v) vfs_unlink((_i),(_d))
-#elif HAVE_3_ARG_VFS_UNLINK
-  #define cr_vfs_unlink(_i,_d,_v) vfs_unlink((_i),(_d),(_v))
-#else
-  #error "Don't know how to call vfs_unlink()"
-#endif
-
-#if HAVE_2_ARG_NOTIFY_CHANGE
-  #define cr_notify_change(_d,_v,_a) notify_change((_d),(_a))
-#elif HAVE_3_ARG_NOTIFY_CHANGE
-  #define cr_notify_change(_d,_v,_a) notify_change((_d),(_v),(_a))
-#else
-  #error "Don't know how to call notify_change()"
 #endif
 
 /* Avoid requesting any I/O > 64 MB (prevents problems on busted kernels).
@@ -438,10 +412,10 @@ cr_sendfile_hugesrc(cr_errbuf_t *eb, struct file *dst_filp, struct file *src_fil
     for (bytes_left = count; bytes_left; bytes_left -= HPAGE_SIZE) {
 	unsigned long tmp;
 	down_write(&mm->mmap_sem);
-	tmp = do_mmap_pgoff(src_filp, map_addr, HPAGE_SIZE, PROT_READ, map_flags, map_pgoff);
+	tmp = cr_mmap_pgoff(src_filp, map_addr, HPAGE_SIZE, PROT_READ, map_flags, map_pgoff);
 	up_write(&mm->mmap_sem);
 	if (IS_ERR((void*)tmp)) {
-	    CR_ERR_EB(eb, "do_mmap(HUGE src file) returned %ld", (long)tmp);
+	    CR_ERR_EB(eb, "mmap(HUGE src file) returned %ld", (long)tmp);
 	    retval = tmp;
 	    goto out_unmap;
 	}
@@ -484,10 +458,10 @@ cr_sendfile_hugedst(cr_errbuf_t *eb, struct file *dst_filp, struct file *src_fil
     for (bytes_left = count; bytes_left; bytes_left -= HPAGE_SIZE) {
 	unsigned long tmp;
 	down_write(&mm->mmap_sem);
-	tmp = do_mmap_pgoff(dst_filp, map_addr, HPAGE_SIZE, PROT_READ|PROT_WRITE, map_flags, map_pgoff);
+	tmp = cr_mmap_pgoff(dst_filp, map_addr, HPAGE_SIZE, PROT_READ|PROT_WRITE, map_flags, map_pgoff);
 	up_write(&mm->mmap_sem);
 	if (IS_ERR((void*)tmp)) {
-	    CR_ERR_EB(eb, "do_mmap(HUGE dst file) returned %ld", (long)tmp);
+	    CR_ERR_EB(eb, "mmap(HUGE dst file) returned %ld", (long)tmp);
 	    retval = tmp;
 	    goto out_err;
 	}
@@ -818,18 +792,27 @@ int cr_save_filename(cr_errbuf_t *eb, struct file *cr_filp, struct file *filp, c
   return retval;
 }
 
-
-/* based on linux/fs/namei.c:lookup_create */
-/* Differs in that the balancing up() takes place on error */
-static struct dentry *cr_lookup_create(struct nameidata *nd, int is_dir)
+int cr_kern_path(const char *name, unsigned int flags, struct path *path)
 {
-    struct dentry *dentry;
+    int retval;
 
-    dentry = lookup_create(nd, is_dir);
-    if (IS_ERR(dentry)) {
-      cr_inode_unlock(nd->nd_dentry->d_inode);
-    }
-    return dentry;
+#if HAVE_KERN_PATH
+    retval = kern_path(name, flags, path);
+#else
+    struct nameidata nd;
+
+    retval = path_lookup(name, flags, &nd);
+
+  #if HAVE_NAMEIDATA_PATH
+    path->dentry = nd.path.dentry;
+    path->mnt = nd.path.mnt;
+  #else
+    path->dentry = nd.dentry;
+    path->mnt = nd.mnt;
+  #endif
+#endif
+
+    return retval;
 }
 
 /*
@@ -890,44 +873,72 @@ out:
     return NULL;
 }
 
-/* Call permision() and dentry_open().
- * Caller should dget() and mntget() just as they would for dentry_open(). */
+/* Call dentry_open().
+ * Caller should path_get() (or dget() and mntget()) just as they would for dentry_open().
+ */
 struct file *
-cr_dentry_open(struct dentry *dentry, struct vfsmount *mnt, int flags)
+cr_dentry_open(struct path *path, int flags)
 {
     struct file *filp;
-    int acc_mask = ("\000\004\002\006"[(flags)&O_ACCMODE]); /* ICK (from linux/fs/namei.c) */
-    int err;
 
-    err = cr_permission(dentry->d_inode, acc_mask, NULL);
-    filp = ERR_PTR(err);
-  #if HAVE_TASK_CRED
-    if (!IS_ERR(filp)) filp = dentry_open(dentry, mnt, flags, cr_current_cred());
-  #else
-    if (!IS_ERR(filp)) filp = dentry_open(dentry, mnt, flags);
+  #if !HAVE_TASK_CRED
+    filp = dentry_open(path->dentry, path->mnt, flags);
+  #elif HAVE_4_ARG_DENTRY_OPEN
+    filp = dentry_open(path->dentry, path->mnt, flags, cr_current_cred());
+  #elif HAVE_3_ARG_DENTRY_OPEN
+    filp = dentry_open(path, flags, cr_current_cred());
+    path_put(path); // dentry_open takes the ref count now
   #endif
 
     return filp;
 }
 
-/* cr_mknod - based on linux/fs/namei.c:sys_mknod
+/* Call both cr_permision() and cr_dentry_open().
+ */
+struct file *
+cr_dentry_open_perm(struct path *path, int flags)
+{
+    struct file *filp;
+    int acc_mask = ("\004\002\006\006"[flags&O_ACCMODE]); /* ACC_MODE(open_to_namei_flags()) */
+    int err;
+
+    err = cr_permission(path->dentry->d_inode, acc_mask);
+    filp = ERR_PTR(err);
+    if (!IS_ERR(filp)) {
+      filp = cr_dentry_open(path, flags);
+    }
+
+    return filp;
+}
+
+/* cr_mknod
  *
  * Creates regular files or fifos (no devices) making them anonymous (unlinked)
- * if desired.
- * Returns a dentry for the resulting filesystem objects, and the corresponding
- * vfsmnt can be obtained in nd->mnt.  Together these two can be passed
- * to dentry_open() or cr_dentry_open(), even for an unlinked inode.
- * In the event of an error, no dput() or cr_path_release() is required,
+ * if desired, populating the struct path appropriatly.
+ * In the event of an error, no dput() or path_put() is required,
  * otherwise they are.
  *
  * In the event that an object exists with the given name, it will be
  * check for the proper mode prior to return, yielding -EEXIST on conflict.
  */
-struct dentry *
-cr_mknod(cr_errbuf_t *eb, struct nameidata *nd, const char *name, int mode, unsigned long unlinked_id)
+int
+cr_mknod(cr_errbuf_t *eb, struct path *path, const char *name, int mode, unsigned long unlinked_id)
 {
-    struct dentry * dentry;
+    mm_segment_t oldfs;
     int err;
+
+#if CRI_DEBUG
+    /* first validate mode */
+    switch (mode & S_IFMT) {
+    case S_IFREG:
+    case S_IFIFO:
+	break;
+    default:
+	CR_ERR_EB(eb, "Unknown/invalid type %d passed to cr_mknod %s.", (mode&S_IFMT), name);
+	err = -EINVAL;
+	goto out;
+    }
+#endif
 
     if (unlinked_id) {
 	/* Generate a replacement name which we will use instead of the original one. */
@@ -939,97 +950,76 @@ cr_mknod(cr_errbuf_t *eb, struct nameidata *nd, const char *name, int mode, unsi
 	}
     }
 
-    /* Prior to 2.6.26, lookup_create() would return an exisiting dentry.
-     * Since 2.6.26, it returns -EEXIST if the dentry exists.  So, we first
-     * check for an existing dentry.  For older kernels this is not required,
-     * but is still correct.
-     */
-    err = path_lookup(name, LOOKUP_FOLLOW, nd);
-    if (!err) {
-	dentry = dget(nd->nd_dentry);
-	err = -EEXIST; /* Forces mode validation below */
-	goto have_it;
-    }
-
-    err = path_lookup(name, LOOKUP_PARENT, nd);
-    if (err) {
-	CR_KTRACE_UNEXPECTED("Couldn't path_lookup for mknod %s.  err=%d.", name, err);
+    /* sys_mknod() */
+    oldfs = get_fs();
+    set_fs(KERNEL_DS);
+    err = sys_mknod(name, mode, 0);
+    set_fs(oldfs);
+    if (err == -EEXIST) {
+	/* Keep going, it may be the one we want */
+    } else if (err < 0) {
 	goto out_free;
     }
 
-    dentry = cr_lookup_create(nd, 0);
-    if (IS_ERR(dentry)) {
-	err = PTR_ERR(dentry);
-	CR_KTRACE_UNEXPECTED("Couldn't lookup_create for mknod %s.  err=%d.", name, err);
-	goto out_release;
+    /* Now get the (struct path) for the newly-created object.
+     * YES, there is a potential race, but we check below that we have the right object.
+     */
+    err = cr_kern_path(name, LOOKUP_FOLLOW, path);
+    if (err < 0) {
+	CR_ERR_EB(eb, "cr_mknod: cr_kern_path(%s) returned %d after sys_mknod()", name, err);
+	goto out_free;
     }
 
-    switch (mode & S_IFMT) {
-    case S_IFREG:
-	err = vfs_create(nd->nd_dentry->d_inode, dentry, mode, nd);
-	break;
-    case S_IFIFO:
-	err = cr_vfs_mknod(nd->nd_dentry->d_inode, dentry, nd->nd_mnt, mode, 0 /* ignored */);
-	break;
-    default:
-	CR_ERR_EB(eb, "Unknown/invalid type %d passed to cr_mknod %s.", (mode&S_IFMT), name);
-	err = -EINVAL;
-    }
-    if (unlinked_id && !err) { /* Note that we don't unlink if we failed to create */
-	dget(dentry);	/* ensure unlink doesn't destroy the dentry */
-	/* Note possibility of silent failure here: */
-	(void)cr_vfs_unlink(nd->nd_dentry->d_inode, dentry, nd->nd_mnt);
-	dput(dentry);
-    }
-    cr_inode_unlock(nd->nd_dentry->d_inode);
-
-have_it:
-    if ((err == -EEXIST) && !((dentry->d_inode->i_mode ^ mode) & S_IFMT)) {
-	/* We fall through and return the dentry */
-    } else if (err) {
-	CR_KTRACE_UNEXPECTED("Couldn't cr_mknod %s.  err=%d.", name, err);
-	goto out_put;
+    /* Check that we have the desired object type.
+     * Needed for sys_mknod() == -EEXIST and for the mknod-to-lookup race.
+     */
+    if ((path->dentry->d_inode->i_mode ^ mode) & S_IFMT) {
+	CR_ERR_EB(eb, "cr_mknod: cr_kern_path(%s) found conflicting object", name);
+	err = -EEXIST;
+	path_put(path);
+	goto out_free;
     }
 
+    /* unlink if required */
     if (unlinked_id) {
-	__putname(name);
+	/* Note possibility of silent failure here: */
+	oldfs = get_fs();
+	set_fs(KERNEL_DS);
+	(void) sys_unlink(name);
+	set_fs(oldfs);
     }
-    return dentry;
 
-out_put:
-    dput(dentry);
-out_release:
-    cr_path_release(nd);
 out_free:
     if (unlinked_id) {
 	__putname(name);
     }
 out:
-    return (struct dentry *)ERR_PTR(err);
+    return err;
 }
 
 /* Calls cr_mknod and then opens with the given flags, returning a (struct file *) */
 struct file *
 cr_filp_mknod(cr_errbuf_t *eb, const char *name, int mode, int flags, unsigned long unlinked_id) {
-    struct nameidata nd;
-    struct dentry * dentry;
+    struct path path;
     struct file *filp;
+    int err;
 
     /* mknod */
-    dentry = cr_mknod(eb, &nd, name, mode, unlinked_id);
-    if (IS_ERR(dentry)) {
+    err = cr_mknod(eb, &path, name, mode, unlinked_id);
+    if (err) {
 	CR_KTRACE_UNEXPECTED("Failed to recreate %sfilesystem object %s, err=%d.",
-			unlinked_id?"unlinked ":"", name, (int)PTR_ERR(dentry));
-	filp = (struct file *)dentry;
+			unlinked_id?"unlinked ":"", name, err);
+	filp = (struct file *)ERR_PTR(err);
 	goto out;
     }
 
     /* now open it */
-    filp = cr_dentry_open(dget(dentry), mntget(nd.nd_mnt), flags);
+    path_get(&path);
+    filp = cr_dentry_open_perm(&path, flags);
     if (IS_ERR(filp)) {
 	CR_ERR_EB(eb, "Failed to reopen %sfilesystem object %s, err=%d.",
-			unlinked_id?"unlinked ":"", name, (int)PTR_ERR(dentry));
-        goto out_dput;
+			unlinked_id?"unlinked ":"", name, (int)PTR_ERR(filp));
+        goto out_put;
     }
 
     /* check that we actually got the expected type */
@@ -1038,34 +1028,28 @@ cr_filp_mknod(cr_errbuf_t *eb, const char *name, int mode, int flags, unsigned l
 			unlinked_id?"unlinked ":"", name);
 	fput(filp);
 	filp = ERR_PTR(-EEXIST);
-	goto out_dput;
     }
 
-out_dput:
-    dput(dentry); 
-    cr_path_release(&nd);
+out_put:
+    path_put(&path);
 out:
     return filp;
 }
 
-/* Based on sys_fchmod() from linux 2.6.21 (mostly unchanged since 2.4.0). */
 int cr_filp_chmod(struct file *filp, mode_t mode) {
-    struct iattr newattrs;
-    struct dentry *dentry = filp->f_dentry;
-    struct inode *inode = dentry->d_inode;
-    int retval;
+    int retval, fd;
 
-    retval = -EROFS;
-    if (IS_RDONLY(inode)) goto out;
-    retval = -EPERM;
-    if (IS_IMMUTABLE(inode) || IS_APPEND(inode)) goto out;
+    retval = get_unused_fd();
+    if (retval < 0) {
+	goto out;
+    }
+    fd = retval;
 
-    cr_inode_lock(inode);
-    newattrs.ia_mode = (mode == (mode_t)-1) ? inode->i_mode
-					    : ((mode & S_IALLUGO)|(inode->i_mode & ~S_IALLUGO));
-    newattrs.ia_valid = ATTR_MODE | ATTR_CTIME;
-    retval = cr_notify_change(dentry, filp->f_vfsmnt, &newattrs);
-    cr_inode_unlock(inode);
+    get_file(filp);
+    fd_install(fd, filp);
+
+    retval = sys_fchmod(fd, mode);
+    (void)sys_close(fd);
 
 out:
     return retval;
@@ -1145,7 +1129,7 @@ out:
 struct dentry *
 cr_link(cr_errbuf_t *eb, struct path *old_path, const char *name)
 {
-    struct nameidata nd;
+    struct path path;
     char *buf, *old_name;
     struct dentry *new_dentry = NULL;
     int retval;
@@ -1178,13 +1162,13 @@ cr_link(cr_errbuf_t *eb, struct path *old_path, const char *name)
     /* Now get the dentry for the newly-created object.
      * YES, there is a potential race, but we check below that we have the right object.
      */
-    retval = path_lookup(name, LOOKUP_FOLLOW, &nd);
+    retval = cr_kern_path(name, LOOKUP_FOLLOW, &path);
     if (retval < 0) {
-	CR_ERR_EB(eb, "cr_link: path_lookup(%s) returned %d", name, retval);
+	CR_ERR_EB(eb, "cr_link: cr_kern_path(%s) returned %d", name, retval);
 	goto out_free;
     }
-    new_dentry = dget(nd.nd_dentry);
-    cr_path_release(&nd);
+    new_dentry = dget(path.dentry);
+    path_put(&path);
 
     /* Check that we have a link to the desired object.
      * Needed for sys_link() == -EEXIST and for the link-to-lookup race.
@@ -1205,12 +1189,19 @@ out:
  * Result is a distinct filp, with potentially different f_flags and f_mode.
  */
 struct file *
-cr_filp_reopen(const struct file *orig_filp, int new_flags)
+cr_filp_reopen(struct file *orig_filp, int new_flags)
 {
-    return orig_filp ? cr_dentry_open(dget(orig_filp->f_dentry),
-				      mntget(orig_filp->f_vfsmnt),
-				      new_flags)
-		     : ERR_PTR(-EBADF);
+    struct file *result;
+    CR_PATH_DECL(path);
+
+    result = ERR_PTR(-EBADF);
+    if (!orig_filp) goto out;
+
+    CR_PATH_GET_FILE(path, orig_filp);
+    result = cr_dentry_open_perm(path, new_flags);
+
+out:
+    return result;
 }
 
 /*
@@ -1229,12 +1220,12 @@ cr_fd_claim(int fd)
     /* Mark the fd in use */
     spin_lock(&current->files->file_lock);
     fdt = cr_fdtable(current->files);
-    if (FD_ISSET(fd, fdt->open_fds)) {
+    if (cr_read_open_fd(fd, fdt)) {
 	retval = -EBUSY;
     } else {
 	retval = 0;
-	FD_SET(fd, fdt->open_fds);
-	FD_CLR(fd, fdt->close_on_exec);
+	cr_set_open_fd(fd, fdt);
+	cr_clear_close_on_exec(fd, fdt);
     }
     spin_unlock(&current->files->file_lock);
 
@@ -1261,7 +1252,7 @@ repeat:
     newfd = start;
     max_fds = CR_MAX_FDS(fdt);
     if (start < max_fds) {
-	newfd = find_next_zero_bit(fdt->open_fds->fds_bits,
+	newfd = find_next_zero_bit(CR_OPEN_FDS_BITS(fdt),
 				   max_fds, start);
     }
 
@@ -1269,6 +1260,7 @@ repeat:
      * However, I haven't bothered to figure out the locking
      * requirements for using anything else.
      * XXX: Probably could just pass the limit in.
+     * XXX: Later kernels push this into expand_files()
      */
     error = -EMFILE;
     if (newfd >= CR_RLIM(current)[RLIMIT_NOFILE].rlim_cur) {
@@ -1286,8 +1278,8 @@ repeat:
     CR_NEXT_FD(files, fdt) = newfd + 1;
 
     /* Claim */
-    FD_SET(newfd, fdt->open_fds);
-    FD_SET(newfd, fdt->close_on_exec);
+    cr_set_open_fd(newfd, fdt);
+    cr_set_close_on_exec(newfd, fdt);
 
     /* Install */
     get_file(filp);

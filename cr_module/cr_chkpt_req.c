@@ -21,7 +21,7 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
- * $Id: cr_chkpt_req.c,v 1.264.6.2 2009/03/06 19:36:11 phargrov Exp $
+ * $Id: cr_chkpt_req.c,v 1.264.6.5 2012/12/18 18:32:05 phargrov Exp $
  */
 
 #include "cr_module.h"
@@ -59,6 +59,10 @@ static int release_request(cr_chkpt_req_t *req)
 // release_proc_req()
 //
 // Try to free a proc_req and associated resources
+//
+// Must be called w/ (parent) req->lock held for writing or when
+// exclusive access to the proc_req is otherwise guaranteed.
+// TODO: atomic ref_count instead of locking parent?
 static void release_proc_req(cr_chkpt_proc_req_t *proc_req)
 {
 	proc_req->ref_count -= 1;
@@ -321,9 +325,13 @@ static int cr_is_ptrace_parent(struct task_struct *task)
 #elif HAVE_TASK_PTRACE
 	struct task_struct *child;
 	CR_DO_EACH_CHILD(child, task) {
-		if (child->ptrace & PT_PTRACED) {
+	    struct task_struct *thread = child;
+	    if (!thread_group_leader(child)) continue;
+	    do {
+		if (thread->ptrace & PT_PTRACED) {
 			return 1;
 		}
+	    } while_each_thread(child, thread);
 	} CR_WHILE_EACH_CHILD(child, task);
 	return 0;
 #else
@@ -573,23 +581,14 @@ static int add_proc(cr_chkpt_req_t *req, struct task_struct *proc)
 
 	if (!proc->mm || !proc->signal) {
 		result = -EPERM;	/* tried to checkpoint a kernel thread or something ?? */
-       	} else if (atomic_read(&proc->signal->count) == atomic_read(&proc->mm->mm_users)) {
-		/* NEW (nptl) pthreads (or single threaded) */
+	} else {
 		CR_DO_EACH_TASK_TGID(proc->tgid, task) {
 			result = add_task(req, task);
 			if (result) {
 				break;
 			}
 		} CR_WHILE_EACH_TASK_TGID(proc->tgid, task);
-	} else {
-		/* OLD (linuthreads) pthreads */
-		CR_DO_EACH_TASK_PROC(proc, task) {
-			result = add_task(req, task);
-			if (result) {
-				break;
-			}
-		} CR_WHILE_EACH_TASK_PROC(proc, task);
-	}
+	} 
 
 out:
 	return result;
@@ -730,12 +729,15 @@ static int build_req_tree(cr_chkpt_req_t *req, pid_t target)
 
 			/* Add all the children - we get their children in the list_for_each() */
 			CR_DO_EACH_CHILD(child, task) {
-
-				if (child->mm == root_mm) continue;	/* Already visited */
-				result = add_task(req, child);
+			    struct task_struct *thread = child;
+			    if (!thread_group_leader(child)) continue;
+			    do {
+				if (thread->mm == root_mm) continue;	/* Already visited */
+				result = add_task(req, thread);
 				if (result) {
 					goto out_fail;
 				}
+			    } while_each_thread(child, thread);
 			} CR_WHILE_EACH_CHILD(child, task);
 		}
 	}
@@ -1331,7 +1333,9 @@ out_no_delete:
 		CR_KTRACE_LOW_LVL("blocking for proces to complete (count=%d)", atomic_read(&proc_req->predump_barrier.count));
 		CR_ASSERT_STEP_EQ(cr_task, 0); // Was reset by delete_dead_task
 		cr_barrier_wait_interruptible(&proc_req->predump_barrier);
+		write_lock(&req->lock);
 		release_proc_req(proc_req);
+		write_unlock(&req->lock);
 		(void)release_request(req);
 	}
 

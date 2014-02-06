@@ -21,7 +21,7 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
- * $Id: cr_kcompat.h,v 1.247.8.2 2009/06/12 20:37:03 phargrov Exp $
+ * $Id: cr_kcompat.h,v 1.247.8.8 2013/01/04 04:21:24 phargrov Exp $
  *
  * This file tries to hide as much as practical the differences among Linux
  * kernel versions.  Preferably this is done by back-porting new features, but
@@ -81,10 +81,15 @@
   #define cr_capable(X) suser()
 #endif
 
+#ifndef MAY_CHDIR
+  #define MAY_CHDIR 0
+#endif
+
 #if HAVE_INODE_PERMISSION
-  #define cr_permission(I,M,N)        inode_permission((I),(M))
+  #define cr_permission(I,M)        inode_permission((I),(M))
 #elif HAVE_PERMISSION
-  #define cr_permission(I,M,N)        permission((I),(M),(N))
+  /* Safe to pass nd=NULL since we don't use LOOKUP_{OPEN,ACCESS} */
+  #define cr_permission(I,M)        permission((I),(M),NULL)
 #else
   #error
 #endif
@@ -112,6 +117,45 @@
   typedef struct files_struct	cr_fdtable_t;
   #define cr_fdtable(files)	(files)
 #endif
+
+#if HAVE_OPEN_FDS_FDS_BITS
+  #define CR_OPEN_FDS_BITS(_fdt)	((_fdt)->open_fds->fds_bits)
+  #define CR_CLOSE_ON_EXEC_BITS(_fdt)	((_fdt)->close_on_exec->fds_bits)
+#else
+  #define CR_OPEN_FDS_BITS(_fdt)	((_fdt)->open_fds)
+  #define CR_CLOSE_ON_EXEC_BITS(_fdt)	((_fdt)->close_on_exec)
+#endif
+
+#if HAVE_CLOSE_ON_EXEC
+  #if HAVE___SET_CLOSE_ON_EXEC
+    #define cr_set_close_on_exec(_fd,_fdt)	__set_close_on_exec(_fd,_fdt)
+    #define cr_clear_close_on_exec(_fd,_fdt)	__clear_close_on_exec(_fd,_fdt)
+  #else
+    #define cr_set_close_on_exec(_fd,_fdt)	__set_bit(_fd,CR_CLOSE_ON_EXEC_BITS(_fdt))
+    #define cr_clear_close_on_exec(_fd,_fdt)	__clear_bit(_fd,CR_CLOSE_ON_EXEC_BITS(_fdt))
+  #endif
+  #define cr_read_close_on_exec(_fd,_fdt)	close_on_exec(_fd,_fdt)
+#else
+  #define cr_set_close_on_exec(_fd,_fdt)	FD_SET(_fd,(_fdt)->close_on_exec)
+  #define cr_clear_close_on_exec(_fd,_fdt)	FD_CLR(_fd,(_fdt)->close_on_exec)
+  #define cr_read_close_on_exec(_fd,_fdt)	FD_ISSET(_fd,(_fdt)->close_on_exec)
+#endif
+
+#if HAVE_FD_IS_OPEN
+  #if HAVE___SET_OPEN_FD
+    #define cr_set_open_fd(_fd,_fdt)	__set_open_fd(_fd,_fdt)
+    #define cr_clear_open_fd(_fd,_fdt)	__clear_open_fd(_fd,_fdt)
+  #else
+    #define cr_set_open_fd(_fd,_fdt)	__set_bit(_fd,CR_OPEN_FDS_BITS(_fdt))
+    #define cr_clear_open_fd(_fd,_fdt)	__clear_bit(_fd,CR_OPEN_FDS_BITS(_fdt))
+  #endif
+  #define cr_read_open_fd(_fd,_fdt)	fd_is_open(_fd,_fdt)
+#else
+  #define cr_set_open_fd(_fd,_fdt)	FD_SET(_fd,(_fdt)->open_fds)
+  #define cr_clear_open_fd(_fd,_fdt)	FD_CLR(_fd,(_fdt)->open_fds)
+  #define cr_read_open_fd(_fd,_fdt)	FD_ISSET(_fd,(_fdt)->open_fds)
+#endif
+
 
 #if HAVE_FILES_STRUCT_NEXT_FD
   #define CR_NEXT_FD(_files, _fdt) ((_files)->next_fd)
@@ -149,6 +193,17 @@
 			  __alignof__(struct __struct),\
 			  (__flags), NULL, NULL)
 #endif  
+
+#if defined(CONFIG_SLUB) && defined(SLAB_POISON)
+  // Work-around a SLUB bug seen in 3.7.1 kernel in which some KMEM_CACHE
+  // calls get merged with the kmalloc-* pools (which is fine by itself).
+  // HOWEVER, these have ZERO rather then ONE as their initial refcount.
+  // That leads to an attempt to close the non-empty kmalloc-8 and
+  // kmalloc-96 slabs when we remove the module.
+  #define CR_KMEM_CACHE(__struct) KMEM_CACHE(__struct, SLAB_POISON)
+#else
+  #define CR_KMEM_CACHE(__struct) KMEM_CACHE(__struct, 0)
+#endif
 
 #if !HAVE_GFP_T
   typedef unsigned int gfp_t;
@@ -191,6 +246,15 @@
     }
     return result;
   }
+#endif
+
+#if HAVE_DO_MMAP_PGOFF
+  #define cr_mmap_pgoff do_mmap_pgoff
+#elif HAVE_DO_MMAP
+  #define cr_mmap_pgoff(_filp, _start, _len, _prot, _flags, _pgoff) \
+                do_mmap(_filp, _start, _len, _prot, _flags, ((_pgoff) << PAGE_SHIFT))
+#else
+  #error "Neither do_mmap() nor do_mmap_pgoff() was found?"
 #endif
 
 // Task accessor macros
@@ -274,7 +338,7 @@
 #elif HAVE_2_ARG_FIND_PID
   #define cr_have_pid(T,P) (find_pid((T),(P)) != NULL)
 #else
-  #error
+  #define cr_have_pid(T,P) (pid_task(find_vpid(P),(T)) != NULL)
 #endif
 
 // Process table iterators
@@ -373,19 +437,6 @@
 #define CR_WHILE_EACH_CHILD(C, T) \
     }
 
-/* How do we manipulate the lock on a inode */
-#if HAVE_INODE_SEM
-  #define cr_inode_lock(_i)			down(&(_i)->i_sem)
-  #define cr_inode_lock_interruptible(_i)	down_interruptible(&(_i)->i_sem)
-  #define cr_inode_unlock(_i)			up(&(_i)->i_sem)
-#elif  HAVE_INODE_MUTEX
-  #define cr_inode_lock(_i)			mutex_lock(&(_i)->i_mutex)
-  #define cr_inode_lock_interruptible(_i)	mutex_lock_interruptible(&(_i)->i_mutex)
-  #define cr_inode_unlock(_i)			mutex_unlock(&(_i)->i_mutex)
-#else
-  #error "Unknown inode lock type"
-#endif 
-
 #ifndef wait_event_interruptible_timeout
 /* from 2.6.8 */
   #define __wait_event_interruptible_timeout(wq, condition, ret) \
@@ -450,18 +501,15 @@
   static __inline__ void cr_set_pwd_file(struct fs_struct *fs, struct file *filp) {
     set_fs_pwd(fs, &filp->f_path);
   }
-  static __inline__ void cr_set_pwd_nd(struct fs_struct *fs, struct nameidata *nd) {
-    set_fs_pwd(fs, &nd->path);
+  static __inline__ void cr_set_pwd_path(struct fs_struct *fs, struct path *path) {
+    set_fs_pwd(fs, path);
   }
-  #define nd_dentry	path.dentry
-  #define nd_mnt	path.mnt
-  #define cr_path_release(_nd) path_put(&((_nd)->path))
   #define CR_PATH_DECL(_name) \
 	struct path *_name /* NO semicolon */
   #define CR_PATH_GET_FS(_name,_arg) \
-	path_get(((_name) = &(_arg)))
+	path_get((struct path *)((_name) = &(_arg)))
   #define CR_PATH_GET_FILE(_name,_arg) \
-	path_get(((_name) = &(_arg)->f_path))
+	path_get((struct path *)((_name) = &(_arg)->f_path))
 #elif HAVE_NAMEIDATA_DENTRY
   static __inline__ void path_get(struct path *path) {
     mntget(path->mnt);
@@ -474,12 +522,9 @@
   static __inline__ void cr_set_pwd_file(struct fs_struct *fs, struct file *filp) {
     set_fs_pwd(fs, filp->f_vfsmnt, filp->f_dentry);
   }
-  static __inline__ void cr_set_pwd_nd(struct fs_struct *fs, struct nameidata *nd) {
-    set_fs_pwd(fs, nd->mnt, nd->dentry);
+  static __inline__ void cr_set_pwd_path(struct fs_struct *fs, struct path *path) {
+    set_fs_pwd(fs, path->mnt, path->dentry);
   }
-  #define nd_dentry	dentry
-  #define nd_mnt	mnt
-  #define cr_path_release path_release
   #define CR_PATH_DECL(_name) \
 	struct path _##_name, *_name /* NO semicolon */
   #define _CR_PATH_GET(_name,_mnt,_dentry) do { \
@@ -581,6 +626,21 @@
   #define cr_do_pipe(_fds) do_pipe(_fds)
 #else
   #error "no cr_do_pipe() definition"
+#endif
+
+#if !defined(DECLARE_MUTEX)
+  #define DECLARE_MUTEX(m) DEFINE_SEMAPHORE(m)
+  #define init_MUTEX(m) sema_init(m, 1)
+#endif
+
+#if HAVE_FS_STRUCT_RWLOCK
+  #define cr_read_lock_fs   read_lock
+  #define cr_read_unlock_fs read_unlock
+#elif HAVE_FS_STRUCT_SPINLOCK
+  #define cr_read_lock_fs   spin_lock
+  #define cr_read_unlock_fs spin_unlock
+#else
+  #error "fs_struct.lock has unknown type"
 #endif
 
 #endif /* _CR_KCOMPAT_H */

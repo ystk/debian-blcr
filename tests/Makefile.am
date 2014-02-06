@@ -65,7 +65,7 @@ CRUT_progs = \
 	simple simple_pthread cwd dup filedescriptors pipe named_fifo \
 	cloexec get_info orphan overlap child mmaps hugetlbfs readdir dev_null \
 	cr_signal linked_fifo sigpending dpipe forward hooks math sigaltstack \
-	prctl lam
+	prctl lam nscd
 # hugetlbfs2 moved to "bonus" list due to leak of MAP_PRIVATE pages in some kernels
 CRUT_TESTS = $(CRUT_progs)
 
@@ -271,7 +271,7 @@ check_progs2 = $(SIMPLE_progs2) $(SEQ_progs2) $(CRUT_progs2) $(helper_progs2)
 check_scripts2 = $(SIMPLE_scripts2) $(SEQ_scripts2) $(helper_scripts2)
 
 # Environment variables visible to the test programs
-TESTS_ENVIRONMENT = top_srcdir="$(TOP_SRCDIR)"
+TESTS_ENVIRONMENT = top_srcdir="$(TOP_SRCDIR)" LIBCR_DISABLE_NSCD=1
 # Automake magic here...
 check_LIBRARIES = libtest.a
 check_HEADERS = crut.h crut_util.h

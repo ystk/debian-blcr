@@ -29,7 +29,7 @@ build () {
 	@TOP_SRCDIR@/configure --with-linux=$_srcdir ${_args} && \
 	make && \
 	echo SUCCESS \
-  ) >& $_logfile
+  ) > $_logfile 2>&1
   if [ "$?" = 0 ]; then
     echo SUCCESS
     rm -Rf ${_blddir}

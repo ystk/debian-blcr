@@ -21,7 +21,7 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
- * $Id: cr_dest_file.c,v 1.27.8.1 2009/06/12 20:37:03 phargrov Exp $
+ * $Id: cr_dest_file.c,v 1.27.8.2 2012/12/18 18:32:05 phargrov Exp $
  */
 
 #include "cr_module.h"
@@ -104,7 +104,7 @@ static int do_init_dir(cr_location_t *loc, struct file *dirp)
 	int result = 0;
 
 	result = cr_permission(dirp->f_dentry->d_inode,
-			       (loc->is_write ? MAY_WRITE : MAY_READ) | MAY_EXEC, NULL);
+			       (loc->is_write ? MAY_WRITE : MAY_READ) | MAY_EXEC | MAY_CHDIR);
 	if (!result) {
 		loc->fs = copy_fs_struct(current->fs);
 		if (loc->fs) {

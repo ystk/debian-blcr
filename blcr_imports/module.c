@@ -21,12 +21,14 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
- * $Id: module.c,v 1.2 2008/05/13 06:06:19 phargrov Exp $
+ * $Id: module.c,v 1.2.32.6 2012/12/23 04:36:34 phargrov Exp $
  */
 
 #include "blcr_config.h"
 
+#ifdef CR_NEED_AUTOCONF_H
 #include <linux/autoconf.h>
+#endif
 #if defined(CONFIG_SMP) && ! defined(__SMP__)
   #define __SMP__
 #endif
@@ -56,7 +58,11 @@ MODULE_LICENSE("GPL");
 #endif
 #include <linux/version.h>
 #ifndef UTS_RELEASE
+ #if HAVE_LINUX_UTSRELEASE_H
   #include <linux/utsrelease.h>
+ #elif HAVE_GENERATED_UTSRELEASE_H
+  #include <generated/utsrelease.h>
+ #endif
 #endif
 #if HAVE_LINUX_COMPILE_H
   #include <linux/compile.h>
@@ -81,8 +87,14 @@ static int __init blcr_imports_init(void)
 
 	/* Check current kernel against System.map used at configure time */
 	{
-	    unsigned long offset1 = CR_EXPORTED_KCODE_register_chrdev - (unsigned long)&register_chrdev;
-	    unsigned long offset2 = CR_EXPORTED_KCODE_register_blkdev - (unsigned long)&register_blkdev;
+#if defined(CR_EXPORTED_KCODE_register_chrdev)
+	    volatile unsigned long offset1 = CR_EXPORTED_KCODE_register_chrdev - (unsigned long)&register_chrdev;
+#elif defined(CR_EXPORTED_KCODE___register_chrdev)
+	    volatile unsigned long offset1 = CR_EXPORTED_KCODE___register_chrdev - (unsigned long)&__register_chrdev;
+#else
+	    #error "No register_chrdev symbol for validation of System.map"
+#endif
+	    volatile unsigned long offset2 = CR_EXPORTED_KCODE_register_blkdev - (unsigned long)&register_blkdev;
 	    if (
 #if defined(CONFIG_RELOCATABLE) && defined(CONFIG_PHYSICAL_ALIGN)
 	    /* Check that relocation offset is valid and constant */

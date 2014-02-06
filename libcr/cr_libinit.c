@@ -21,7 +21,7 @@
  * License along with this library; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
- * $Id: cr_libinit.c,v 1.14.6.2 2009/03/11 20:58:02 phargrov Exp $
+ * $Id: cr_libinit.c,v 1.14.6.5 2012/12/21 07:21:25 phargrov Exp $
  */
 
 #include <stdlib.h>
@@ -86,6 +86,12 @@ static int cri_sigaction(int signum, const struct sigaction *act, struct sigacti
     return rc;
 }
 #endif
+
+/* Since glibc-2.15 __nss_disable_nscd takes a callback:
+ *  void cb(size_t dbidx, struct traced_file *info)
+ * This is our stand-in for that callback.
+ */
+static void empty_nscd_cb(size_t dbidx, void *info) { return; }
 
 /* Initialization entry point.
  *
@@ -182,6 +188,28 @@ static void __attribute__((constructor)) cri_init(void)
     if (rc != 0) {
 	CRI_ABORT("sigaction() failed: %s", strerror(errno));
     }
+
+#ifdef CR_BUILDING_OMIT
+    // Don't try to disable NSCD
+#else
+    // Disable NSCD if requested (bugs 1962 and 2560)
+    {
+	const char *val = getenv("LIBCR_DISABLE_NSCD");
+	if (val && val[0]) { // Exists and not the empty string
+    #if HAVE___NSS_DISABLE_NSCD && 0 // Cannot use a GLIBC_PRIVATE symbol w/ RPMS
+	    __nss_disable_nscd(&empty_nscd_cb);
+    #else
+    	    // If not found at configure time, try via dynamic linker
+	    void *dlhandle = dlopen(NULL, RTLD_LAZY);
+	    if (dlhandle) {
+		void (*disable_nscd)(void *) = dlsym(dlhandle, "__nss_disable_nscd");
+		if (disable_nscd) disable_nscd(&empty_nscd_cb);
+		dlclose(dlhandle);
+	    }
+    #endif
+	}
+    }
+#endif
 }
 
 /* One symbol (different name in each lib) to help with linking the .a

@@ -47,7 +47,18 @@ libcr_omit_la_CFLAGS = @CR_LIBCR_CFLAGS@ $(AM_CFLAGS) -DLIBCR_SIGNAL_ONLY
 if CR_ENABLE_SHARED
 # XXX: should split off arch-specific portions of the symbol filter
 cr_lib_check:
-	@if (nm -D .libs/libcr_run.so | egrep -v -e ' [^TDB] ' -e ' [TDB] \.?crsig_' -e ' [TDB] \.?cri?_run_' -e ' [TD] \.?_init' -e ' [TD] \.?_fini' -e ' D __data_start' -e ' T _(save|rest)[gf]pr_[123][0-9](_x)?'); then \
+	@if (nm -D .libs/libcr_run.so | egrep -v \
+			-e ' [^TDB] ' \
+			-e ' [TDB] \.?crsig_' \
+			-e ' [TDB] \.?cri?_run_' \
+			-e ' [TD] \.?_init' \
+			-e ' [TD] \.?_fini' \
+			-e ' D __data_start' \
+			-e ' D _edata' \
+			-e ' B __bss_start' \
+			-e ' B _end' \
+			-e ' T _(save|rest)[gf]pr_[123][0-9](_x)?'); \
+		then \
 		echo "ERROR: libcr_run.so leaks symbol(s), above."; \
 		exit 1; \
 	 fi

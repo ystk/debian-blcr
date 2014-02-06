@@ -17,7 +17,7 @@
  *  along with this program; if not, write to the Free Software
  *  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  *
- * $Id: vmadcheck.c,v 1.7 2008/04/26 20:04:51 phargrov Exp $
+ * $Id: vmadcheck.c,v 1.7.40.1 2012/12/18 18:32:09 phargrov Exp $
  *-----------------------------------------------------------------------*/
 #include <stdio.h>
 #include <stdlib.h>
@@ -497,7 +497,7 @@ int main(int argc, char *argv[]) {
 	    filename[map.namelen]=0;
 	    printf("map:    %0*lx-%0*lx %04x file %s:%0*lx\n",
 		   PTRWIDTH, map.start, PTRWIDTH, map.end, (int)map.flags,
-		   filename, PTRWIDTH, map.offset);
+		   filename, PTRWIDTH, map.pgoff * PAGE_SIZE);
 	} else {
 	    printf("map:    %0*lx-%0*lx %04x (data provided)\n",
 		   PTRWIDTH, map.start, PTRWIDTH, map.end, (int)map.flags);

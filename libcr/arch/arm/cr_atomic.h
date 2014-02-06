@@ -21,7 +21,7 @@
  * License along with this library; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
- * $Id: cr_atomic.h,v 1.5 2008/09/05 03:55:11 phargrov Exp $
+ * $Id: cr_atomic.h,v 1.5.8.1 2012/12/22 00:14:29 phargrov Exp $
  *
  * Experimental ARM support contributed by Anton V. Uzunov
  * <anton.uzunov@dsto.defence.gov.au> of the Australian Government
@@ -32,6 +32,25 @@
 
 #ifndef _CR_ATOMIC_H
 #define _CR_ATOMIC_H	1
+
+#if defined(__ARM_ARCH_2__) || defined(__ARM_ARCH_3__)
+  // Sanity-check that we're not building on a really old architecture,
+  // so that the using #ifdef __ARM_ARCH_4__ works to test for
+  // lack of blx <register> support.
+  #error "ARM Architecture versions prior to ARMv4 not supported."
+#elif defined(__ARM_ARCH_4T__) && defined(__thumb__)
+  // The inline asm is not compatible with Thumb-1 anyway, but in particular
+  // we assume later that if __ARM_ARCH_4__ is not defined, we have ARMv5
+  // or above.  Ensure here that this assumption will be valid.
+  #error "Building for Thumb on ARMv4 is not supported."
+#endif
+
+// Determine whether to use BLX <register> for function calls to
+// computed addresses:
+#undef ARM_HAVE_BLX_REG
+#if !(defined(__ARM_ARCH_4__) || defined(__ARM_ARCH_4T__))
+  #define ARM_HAVE_BLX_REG 1
+#endif
 
 #include "blcr_config.h"
 
@@ -61,7 +80,8 @@ cri_atomic_write(cri_atomic_t *p, unsigned int val)
     __asm__ __volatile__("": : :"memory");
 }
 
-#if defined(CR_KCODE___kuser_cmpxchg)
+// Was '#if defined(CR_KCODE___kuser_cmpxchg), but that prevented separate user/kerel builds.
+#if 1
 // For kernel >= 2.6.12, we use __kernel_cmpxchg()
 //    See linux-2.6.12/arch/arm/kernel/entry-armv.S
 // For >= ARM6 we could/should be using load-exclusive directly.
@@ -83,10 +103,15 @@ __cri_atomic_add_fetch(cri_atomic_t *p, unsigned int op)
 
     __asm__ __volatile__ (
 	"0:	ldr	r0, [r2]	@ r0 = *p		\n"
-	"	mov	r3, #" _STRINGIFY(cri_kuser_base) "	\n"
-	"	adr	lr, 1f		@ lr = return address	\n"
 	"	add	r1, r0, %2	@ r1 = r0 + op		\n"
+	"	mov	r3, #" _STRINGIFY(cri_kuser_base) "	\n"
+#ifdef ARM_HAVE_BLX_REG
+	"	sub	r3, r3, #" _STRINGIFY(cri_kuser_offset) "\n"
+	"	blx	r3\n"
+#else // ARMv4T and below
+	"	adr	lr, 1f		@ lr = return address	\n"
 	"	sub	pc, r3, #" _STRINGIFY(cri_kuser_offset) "\n"
+#endif
 	"1:	bcc     0b		@ retry on Carry Clear"
 	: "=&r" (__sum)
 	: "r" (__ptr), "rIL" (op)
@@ -135,8 +160,15 @@ cri_cmp_swap(cri_atomic_t *p, unsigned int oldval, unsigned int newval)
     __asm__ __volatile__ (
 	"0:     mov     r0, r4          @ r0 = oldval           \n"
 	"	mov	r3, #" _STRINGIFY(cri_kuser_base) "	\n"
-	"	mov	lr, pc		@ lr = return addr	\n"
+#ifdef ARM_HAVE_BLX_REG
+	"	sub	r3, r3, #" _STRINGIFY(cri_kuser_offset) "\n"
+	"	blx	r3\n"
+#else // ARMv4T and below
+	"	adr	lr, 1f		@ lr = return addr	\n"
 	"	sub	pc, r3, #" _STRINGIFY(cri_kuser_offset) "\n"
+#endif
+	"1:	        \n"
+	"       ite cc                  @ needed in Thumb2 mode \n"
 	"       ldrcc   ip, [r2]        @ if (!swapped) ip=*p   \n"
 	"       eorcs   ip, r4, #1      @ else ip=oldval^1      \n"
 	"       teq     r4, ip          @ if (ip == oldval)     \n"

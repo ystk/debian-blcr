@@ -21,7 +21,7 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
- * $Id: cr_module.h,v 1.285.4.2 2009/06/07 03:27:36 phargrov Exp $
+ * $Id: cr_module.h,v 1.285.4.7 2013/01/28 23:44:01 phargrov Exp $
  */
 
 #ifndef _CR_MODULE_H
@@ -31,7 +31,9 @@
 #include "blcr_config.h"	// Configuration
 
 #include <linux/module.h>
+#ifdef CR_NEED_AUTOCONF_H
 #include <linux/autoconf.h>
+#endif
 
 #include <linux/kernel.h>
 #include <linux/types.h>
@@ -86,7 +88,7 @@ typedef struct cr_rstrt_preq_s cr_rstrt_proc_req_t;
 // context files not readable by the previous release.
 // Must correct CR_CONTEXT_VERSION_MIN in any public release that cannot
 // read context files produced by older versions.
-#define CR_CONTEXT_VERSION 8
+#define CR_CONTEXT_VERSION 9
 #define CR_CONTEXT_VERSION_MIN 8
 
 // cr_objectmap_t is an opaque type
@@ -266,8 +268,8 @@ typedef struct cr_rstrt_req_s {
         cr_location_t           src;
 	atomic_t                ref_count;
 	struct task_struct     *cr_restart_task;
-	struct file            *cr_restart_stdin;
-	struct file            *cr_restart_stdout;
+	struct file            *dpipe_in;
+	struct file            *dpipe_out;
 	int	                need_procs;
 	cr_rstrt_state_t        state;
 	wait_queue_head_t	wait;		// place for requester to wait for state changes
@@ -446,14 +448,16 @@ extern int cr_save_filename(cr_errbuf_t *eb, struct file *cr_filp, struct file *
 extern const char *__cr_getname(cr_errbuf_t *eb, struct file *filp, int null_ok);
 extern const char *cr_getname(cr_errbuf_t *eb, cr_rstrt_relocate_t reloc, struct file *filp, int null_ok);
 extern const char *cr_location2path(cr_location_t *loc, char *buf, int size);
-extern struct file * cr_dentry_open(struct dentry *dentry, struct vfsmount *mnt, int flags);
-extern struct dentry *cr_mknod(cr_errbuf_t *eb, struct nameidata *nd, const char *name, int mode, unsigned long unlinked_id);
+extern int cr_kern_path(const char *name, unsigned int flags, struct path *path);
+extern struct file * cr_dentry_open(struct path *path, int flags);
+extern struct file * cr_dentry_open_perm(struct path *path, int flags);
+extern int cr_mknod(cr_errbuf_t *eb, struct path *path, const char *name, int mode, unsigned long unlinked_id);
 extern struct file *cr_filp_mknod(cr_errbuf_t *eb, const char *name, int mode, int flags, unsigned long unlinked_id);
 extern int cr_filp_chmod(struct file *filp, mode_t mode);
 extern struct file *cr_mkunlinked(cr_errbuf_t *eb, struct file *cr_filp, const char *name, int mode, int flags, loff_t size, unsigned long unlinked_id);
 extern loff_t cr_sendfile(cr_errbuf_t *eb, struct file *dst_filp, struct file *src_filp, loff_t *src_ppos, loff_t count);
 extern struct dentry *cr_link(cr_errbuf_t *eb, struct path *old_path, const char *name);
-extern struct file *cr_filp_reopen(const struct file *orig_filp, int new_flags);
+extern struct file *cr_filp_reopen(struct file *orig_filp, int new_flags);
 extern int cr_fd_claim(int fd);
 extern int cr_dup_other(struct files_struct *files, struct file *filp);
 extern int cr_fstat(cr_objectmap_t, struct file *filp);

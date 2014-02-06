@@ -21,7 +21,7 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
- * $Id: pipe.c,v 1.15 2008/11/30 04:36:56 phargrov Exp $
+ * $Id: pipe.c,v 1.15.8.4 2011/10/03 00:36:51 phargrov Exp $
  *
  * Simple tests of pipe save and restore.
  */
@@ -38,8 +38,30 @@
 
 #include <linux/limits.h>
 
+#include "blcr_config.h"
 #include "crut.h"
 #include "crut_util.h"
+
+/* should we try to run the pipe resize test?  We only try if the kernel
+ * has the pipe_fcntl() call, and if we pulled the right definitions.  */
+#if defined(F_SETPIPE_SZ) && defined(F_GETPIPE_SZ)
+    #define TEST_PIPE_FCNTL 1
+#elif defined(HAVE_PIPE_FCNTL) && HAVE_PIPE_FCNTL
+    #if !defined(F_SETPIPE_SZ) && defined(CR_F_SETPIPE_SZ)
+        #define F_SETPIPE_SZ CR_F_SETPIPE_SZ
+    #endif
+    #if !defined(F_GETPIPE_SZ) && defined(CR_F_GETPIPE_SZ)
+        #define F_GETPIPE_SZ CR_F_GETPIPE_SZ
+    #endif
+    #if defined(F_SETPIPE_SZ) && defined(F_GETPIPE_SZ) 
+        #define TEST_PIPE_FCNTL 1
+    #else
+        #warning "Found pipe_fcntl in kernel, but could not find F_SETPIPE_SZ."
+        #define TEST_PIPE_FCNTL 0
+    #endif
+#else
+    #define TEST_PIPE_FCNTL 0
+#endif
 
 #define PIPE_LARGE_MIN 1048576
 
@@ -51,6 +73,13 @@
 
 #define TEST_BLOCKING 0
 #define TEST_NONBLOCKING 1
+#define TEST_SETSIZE 2
+
+#if TEST_PIPE_FCNTL
+#define SETPIPE_SZ_SIZE 1048576L
+int have_pipe_fcntl = 1;
+long test_pipe_size;
+#endif
 
 int barrier = -1;
 
@@ -294,14 +323,35 @@ write_pipe_small(struct pipe_struct *p)
 }
 
 static int
-pipes_pre(int nonblock)
+pipes_pre(int test_to_run)
 {
     int retval;
 
-    if (nonblock == TEST_NONBLOCKING) {
+    if (test_to_run == TEST_NONBLOCKING) {
         CRUT_DEBUG("Setting nonblocking flag");
         fcntl(pipe_array[0].pipe_fd, F_SETFL, O_NONBLOCK);
     }
+
+#if TEST_PIPE_FCNTL
+    if (test_to_run == TEST_SETSIZE) {
+        long pipe_size = 0;
+
+        pipe_size = fcntl(pipe_array[0].pipe_fd, F_GETPIPE_SZ, 0);
+        CRUT_DEBUG("before: F_GETPIPE_SZ = %ld", pipe_size);
+	if (pipe_size < 0) {
+	    /* disable test if this first call failed */
+	    have_pipe_fcntl = 0;
+	    return 0;
+	}
+
+        CRUT_DEBUG("Resizing the pipe buffer");
+        fcntl(pipe_array[0].pipe_fd, F_SETPIPE_SZ, SETPIPE_SZ_SIZE);
+
+        /* Use queried size, even if the F_SETPIPE_SZ had failed */
+        test_pipe_size = fcntl(pipe_array[0].pipe_fd, F_GETPIPE_SZ, 0);
+        CRUT_DEBUG("after: F_GETPIPE_SZ = %ld", test_pipe_size);
+    }
+#endif
     
     retval = write_pipe_small(&pipe_array[1]);
 
@@ -780,6 +830,32 @@ pipe_rw_restart(void *p)
     return pipe_test();
 }
 
+#if TEST_PIPE_FCNTL
+static int
+pipe_setsize_pre(void *p)
+{
+    return pipes_pre(TEST_SETSIZE);
+}
+
+static int
+pipe_setsize_restart(void *p)
+{
+    long pipe_size;
+
+    if (!have_pipe_fcntl) return 0; /* Nothing to test */
+
+    CRUT_DEBUG("Checking value of F_GETPIPE_SZ.");
+    pipe_size = fcntl(pipe_array[0].pipe_fd, F_GETPIPE_SZ, 0);
+
+    if (pipe_size != test_pipe_size) {
+        CRUT_FAIL("F_GETPIPE_SZ returned %ld instead of %ld", pipe_size, 
+                  test_pipe_size);
+    }
+
+    return pipe_test();
+}
+#endif
+
 
 static int
 pipe_nonblock_pre(void *p)
@@ -867,6 +943,19 @@ main(int argc, char *argv[])
 	test_teardown:pipe_teardown,
     };
 
+#if TEST_PIPE_FCNTL
+    struct crut_operations pipe_setpipe_sz_ops = {
+	test_scope:CR_SCOPE_PROC,
+	test_name:"pipe_setsize",
+        test_description:"Test whether fcntl(pipe, F_SETPIPE_SZ, ...) is honored across a restart.",
+	test_setup:pipe_one_setup,
+	test_precheckpoint:pipe_setsize_pre,
+	test_continue:pipe_setsize_restart,
+	test_restart:pipe_setsize_restart,
+	test_teardown:pipe_teardown,
+    };
+#endif
+
     struct crut_operations pipe_nonblock_ops = {
 	test_scope:CR_SCOPE_PROC,
 	test_name:"pipe_nonblock",
@@ -913,6 +1002,11 @@ main(int argc, char *argv[])
 
     /* add the basic tests */
     crut_add_test(&pipe_test_ops);
+
+#if TEST_PIPE_FCNTL
+    /* add the basic tests */
+    crut_add_test(&pipe_setpipe_sz_ops);
+#endif
 
     /* add the non-blocking pipe test */
     crut_add_test(&pipe_nonblock_ops);

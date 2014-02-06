@@ -1,7 +1,7 @@
 # Here are the configuration bits needed in the "caller" to use this file
 #SUBDIR = vmadump4
 #TARGET = vmadump
-#SOURCES = vmadump_common.c vmadump_@CR_ARCH@.c optional.h
+#SOURCES = vmadump_common.c vmadump_@CR_KARCH@.c optional.h
 #[optional]EXTRA_CFLAGS = -I$(top_builddir)/include -I$(top_builddir) -I$(srcdir)
 #[optional]IMPORTS_FROM = /some/other/kbuild/module/dir /and/another
 #
@@ -20,13 +20,13 @@ LINUX_OBJ := @LINUX_OBJ@
 srcdir := $(top_srcdir)/$(SUBDIR)
 builddir := $(top_builddir)/$(SUBDIR)/kbuild
 mkinstalldirs := $(SHELL) $(top_srcdir)/config/install-sh -d
-CLEAN_FILES := *.o *.ko *.mod.c .*.cmd .tmp_versions *.symvers modules.order
+CLEAN_FILES := *.o *.ko *.ko.unsigned *.mod.c .*.cmd .tmp_versions *.symvers modules.order Module.markers
 TARGET_SUFFIX := .ko
 
 # Remove headers from the list of sources, and sort to remove possible duplicates
 DOT_C := $(sort $(filter %.c,$(SOURCES)))
 
-ifeq ($(TOPDIR),)
+ifeq ($(srctree),)
 # not within KBUILD - implement automake's standard goals
 
 all: $(LINUX_OBJ)/.config prepare

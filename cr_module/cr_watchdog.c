@@ -21,7 +21,7 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
- * $Id: cr_watchdog.c,v 1.7 2008/08/21 05:22:49 phargrov Exp $
+ * $Id: cr_watchdog.c,v 1.7.8.1 2011/02/17 19:44:12 phargrov Exp $
  */
 
 #include "cr_module.h"
@@ -32,7 +32,7 @@
 // Interval for the watchdog to wakeup HZ = 1s
 #define CR_WD_INTERVAL	(HZ)
 
-#if HAVE_STRUCT_DELAYED_WORK
+#if HAVE_STRUCT_DELAYED_WORK && defined(DECLARE_DELAYED_WORK)
   typedef struct work_struct * cr_work_arg_t;
   #define CR_DECLARE_DELAYED_WORK DECLARE_DELAYED_WORK
 #else /* struct work_struct */

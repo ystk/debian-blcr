@@ -21,7 +21,7 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
- * $Id: stage0001.c,v 1.8 2008/07/26 06:38:15 phargrov Exp $
+ * $Id: stage0001.c,v 1.8.12.1 2012/12/18 18:32:08 phargrov Exp $
  */
 
 
@@ -246,6 +246,8 @@ int main(void)
     }
 
     printf("014 DONE\n");
+
+    (void)unlink(filename); // might fail silently
 
     return 0;
 }

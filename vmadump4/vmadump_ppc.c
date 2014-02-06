@@ -17,7 +17,7 @@
  *  along with this program; if not, write to the Free Software
  *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
- * $Id: vmadump_ppc.c,v 1.10 2008/08/02 02:19:05 phargrov Exp $
+ * $Id: vmadump_ppc.c,v 1.10.14.4 2012/12/22 07:42:52 phargrov Exp $
  *
  * THIS VERSION MODIFIED FOR BLCR <http://ftg.lbl.gov/checkpoint>
  *-----------------------------------------------------------------------*/
@@ -27,6 +27,10 @@
 
 #define __VMADUMP_INTERNAL__
 #include "vmadump.h"
+
+#if HAVE_ASM_SWITCH_TO_H
+#  include <asm/switch_to.h>
+#endif
 
 long vmadump_store_cpu(cr_chkpt_proc_req_t *ctx, struct file *file,
 		       struct pt_regs *regs) {
@@ -157,9 +161,12 @@ loff_t vmad_store_arch_map(cr_chkpt_proc_req_t *ctx, struct file *file,
 	head.end     = map->vm_end;
 	head.flags   = map->vm_flags;
 	head.namelen = VMAD_NAMELEN_ARCH;
-	head.offset  = 0;
+	head.pgoff   = 0;
 
+	up_read(&current->mm->mmap_sem);
 	r = write_kern(ctx, file, &head, sizeof(head));
+	down_read(&current->mm->mmap_sem);
+
 	if (r < 0) return r;
 	if (r != sizeof(head)) r = -EIO;
     }
@@ -188,15 +195,12 @@ int vmad_load_arch_map(cr_rstrt_proc_req_t *ctx, struct file *file,
      * Here we check this new value against against the desired location (in head->start).
      */
     if (head->start != vmad_vdso_base) {
-	long len = head->end - head->start;
-	unsigned long old_addr = vmad_vdso_base;
-	unsigned long new_addr = sys_mremap(old_addr, len, len, MREMAP_FIXED|MREMAP_MAYMOVE, head->start);
-	if (new_addr != head->start) {
-		r = (new_addr & (PAGE_SIZE-1)) ? new_addr : -ENOMEM;
-		CR_ERR_CTX(ctx, "vdso remap failed %d", (int)r);
-		goto err;
+	r = vmad_remap(ctx, (unsigned long)vmad_vdso_base, head->start, head->end - head->start);
+	if (r) {
+	    CR_ERR_CTX(ctx, "vdso remap failed %d", (int)r);
+	    goto err;
 	}
-	vmad_vdso_base = new_addr;
+	vmad_vdso_base = head->start;
     }
 
     r = 0;

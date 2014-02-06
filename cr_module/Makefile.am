@@ -31,13 +31,13 @@ my_sources = \
 
 BPROC_VERSION	= "4.0.0pre8"
 vmadump_dir	= $(top_srcdir)/vmadump4
-vmad_sources	= $(vmadump_dir)/vmadump_common.c $(vmadump_dir)/vmadump_@CR_ARCH@.c
+vmad_sources	= $(vmadump_dir)/vmadump_common.c $(vmadump_dir)/vmadump_@CR_KARCH@.c
 vmad_include	= -I$(vmadump_dir) -D__NR_vmadump=-1 -DBPROC_VERSION='$(BPROC_VERSION)'
 
 cr_sources	= $(my_sources) $(vmad_sources)
 INCLUDES =	-I$(top_builddir)/include	\
 		-I$(top_srcdir)/include		\
-		-I$(srcdir)/arch/@CR_ARCH@	\
+		-I$(srcdir)/arch/@CR_KARCH@	\
 		$(vmad_include)
 
 # echo an arbitrary make/environment variable (needed by kbuild glue)

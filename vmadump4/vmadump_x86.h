@@ -17,7 +17,7 @@
  *  along with this program; if not, write to the Free Software
  *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
- * $Id: vmadump_x86.h,v 1.9 2008/12/06 00:50:28 phargrov Exp $
+ * $Id: vmadump_x86.h,v 1.9.8.3 2012/12/18 18:32:09 phargrov Exp $
  *
  *  THIS FILE ADDED FOR BLCR <http://ftg.lbl.gov/checkpoint>
  *-----------------------------------------------------------------------*/
@@ -26,6 +26,9 @@
 
 #include <asm/desc.h>
 #include <asm/i387.h>
+#if HAVE_LINUX_PERF_EVENT_H
+  #include <linux/perf_event.h>
+#endif
 
 /* set_used_math() first appears in 2.6.11 */
 #ifndef set_used_math
@@ -41,6 +44,9 @@
 #elif HAVE_THREAD_XSTATE
   typedef union thread_xstate vmad_i387_t;
   #define vmad_task_i387(_task) ((_task)->thread.xstate)
+#elif HAVE_THREAD_FPU
+  typedef union thread_xstate vmad_i387_t;
+  #define vmad_task_i387(_task) ((_task)->thread.fpu.state)
 #else
   #error "Unknown i387 state type"
 #endif
@@ -61,6 +67,24 @@ struct vmadump_restore_tmps {
     (&((_x86tmp)->_u._threadtmp))
 #define VMAD_I387TMP(_x86tmp) \
     (&((_x86tmp)->_u._i387tmp))
+
+#ifdef _ASM_EXTABLE
+  /* Nothing to do here */
+#elif VMAD_ARCH == VMAD_ARCH_x86_64
+  #define _ASM_EXTABLE(from,to) \
+         ".section __ex_table,\"a\"   \n" \
+         "    .align 8                \n" \
+         "    .quad " #from "," #to " \n" \
+         ".previous                   \n"
+#elif VMAD_ARCH == VMAD_ARCH_i386
+  #define _ASM_EXTABLE(from,to) \
+         ".section __ex_table,\"a\"   \n" \
+         "    .align 4                \n" \
+         "    .long " #from "," #to " \n" \
+         ".previous                   \n"
+#else
+  #error "Unknown VMAD_ARCH"
+#endif
 
 static
 long vmadump_store_i387(cr_chkpt_proc_req_t *ctx, struct file *file) {
@@ -116,10 +140,7 @@ vmad_check_fpu_state(void)
          "3:  movl %2, %0             \n"
          "    jmp 2b                  \n"
          ".previous                   \n"
-         ".section __ex_table,\"a\"   \n"
-         "    .align 4                \n"
-         "    .long 1b, 3b            \n"
-         ".previous                   \n"
+	 _ASM_EXTABLE(1b, 3b)
          : "+r"(r)
          : "m" (i387tmp->fxsave), "i"(-EFAULT));
     } else {
@@ -130,10 +151,7 @@ vmad_check_fpu_state(void)
          "3:  movl %2, %0             \n"
          "    jmp 2b                  \n"
          ".previous                   \n"
-         ".section __ex_table,\"a\"   \n"
-         "    .align 4                \n"
-         "    .long 1b, 3b            \n"
-         ".previous                   \n"
+	 _ASM_EXTABLE(1b, 3b)
          : "+r"(r)
          : "m" (i387tmp->fsave), "i"(-EFAULT));
     }
@@ -156,14 +174,14 @@ int vmadump_restore_i387(cr_rstrt_proc_req_t *ctx, struct file *file,
 
     if (flag) {
         r = -ENOMEM;
-#if HAVE_THREAD_XSTATE
+#if HAVE_THREAD_XSTATE || HAVE_THREAD_FPU
         /* Lazy allocation of FP state storage */
         if (!vmad_task_i387(current)) {
             init_fpu(current);
         }
 #endif
         if (!vmad_task_i387(current)) {
-            CR_ERR_CTX(ctx, "%d: FPU restore failure.", current->pid);
+            CR_ERR_CTX(ctx, "%d: FPU initialization failure.", current->pid);
             goto bad_read;
         }
         r = read_kern(ctx, file, i387tmp, sizeof(*i387tmp));
@@ -214,41 +232,37 @@ int vmadump_restore_i387(cr_rstrt_proc_req_t *ctx, struct file *file,
 /* Save debugging state */
 static
 long vmadump_store_debugreg(cr_chkpt_proc_req_t *ctx, struct file *file) {
+    struct thread_struct *const thread = &current->thread;
+    unsigned long debugregs[6];
     long r, bytes = 0;
 
 #if HAVE_THREAD_DEBUGREGS
-    r = write_kern(ctx, file, &current->thread.debugreg,
-		   sizeof(current->thread.debugreg));
-    if (r != sizeof(current->thread.debugreg)) goto err;
-    bytes += r;
+    {	int i;
+	for (i=0; i<6; ++i) debugregs[i] = thread->debugreg[i];
+    }
 #elif HAVE_THREAD_DEBUGREG0
-    r = write_kern(ctx, file, &current->thread.debugreg0,
-		   sizeof(current->thread.debugreg0));
-    if (r != sizeof(current->thread.debugreg0)) goto err;
-    bytes += r;
-    r = write_kern(ctx, file, &current->thread.debugreg1,
-		   sizeof(current->thread.debugreg1));
-    if (r != sizeof(current->thread.debugreg1)) goto err;
-    bytes += r;
-    r = write_kern(ctx, file, &current->thread.debugreg2,
-		   sizeof(current->thread.debugreg2));
-    if (r != sizeof(current->thread.debugreg2)) goto err;
-    bytes += r;
-    r = write_kern(ctx, file, &current->thread.debugreg3,
-		   sizeof(current->thread.debugreg3));
-    if (r != sizeof(current->thread.debugreg3)) goto err;
-    bytes += r;
-    r = write_kern(ctx, file, &current->thread.debugreg6,
-		   sizeof(current->thread.debugreg6));
-    if (r != sizeof(current->thread.debugreg6)) goto err;
-    bytes += r;
-    r = write_kern(ctx, file, &current->thread.debugreg7,
-		   sizeof(current->thread.debugreg7));
-    if (r != sizeof(current->thread.debugreg7)) goto err;
-    bytes += r;
+    debugregs[0] = thread->debugreg0;
+    debugregs[1] = thread->debugreg1;
+    debugregs[2] = thread->debugreg2;
+    debugregs[3] = thread->debugreg3;
+    debugregs[4] = thread->debugreg6;
+    debugregs[5] = thread->debugreg7;
+#elif HAVE_THREAD_PTRACE_BPS
+    {	int i;
+	for (i=0; i<4; ++i) {
+	    struct perf_event *bp = thread->ptrace_bps[i];
+	    debugregs[i] = bp ? bp->hw.info.address : 0;
+	}
+	debugregs[4] = thread->debugreg6;
+	debugregs[5] = thread->ptrace_dr7; /* XXX: is this correct? */
+    }
 #else
     #error
 #endif
+
+    r = write_kern(ctx, file, &debugregs, sizeof(debugregs));
+    if (r != sizeof(debugregs)) goto err;
+    bytes += r;
 
     return bytes;
 
@@ -259,29 +273,12 @@ long vmadump_store_debugreg(cr_chkpt_proc_req_t *ctx, struct file *file) {
 
 /* Read (but don't restore) debugging state */
 static
-int vmadump_restore_debugreg(cr_rstrt_proc_req_t *ctx, struct file *file,
-                             struct thread_struct *threadtmp) {
+int vmadump_restore_debugreg(cr_rstrt_proc_req_t *ctx, struct file *file) {
+    unsigned long debugregs[6];
     int r;
 
-#if HAVE_THREAD_DEBUGREGS
-    r = read_kern(ctx, file, threadtmp->debugreg, sizeof(threadtmp->debugreg));
-    if (r != sizeof(threadtmp->debugreg)) goto bad_read;
-#elif HAVE_THREAD_DEBUGREG0
-    r = read_kern(ctx, file, &threadtmp->debugreg0, sizeof(threadtmp->debugreg0));
-    if (r != sizeof(threadtmp->debugreg0)) goto bad_read;
-    r = read_kern(ctx, file, &threadtmp->debugreg1, sizeof(threadtmp->debugreg1));
-    if (r != sizeof(threadtmp->debugreg1)) goto bad_read;
-    r = read_kern(ctx, file, &threadtmp->debugreg2, sizeof(threadtmp->debugreg2));
-    if (r != sizeof(threadtmp->debugreg2)) goto bad_read;
-    r = read_kern(ctx, file, &threadtmp->debugreg3, sizeof(threadtmp->debugreg3));
-    if (r != sizeof(threadtmp->debugreg3)) goto bad_read;
-    r = read_kern(ctx, file, &threadtmp->debugreg6, sizeof(threadtmp->debugreg6));
-    if (r != sizeof(threadtmp->debugreg6)) goto bad_read;
-    r = read_kern(ctx, file, &threadtmp->debugreg7, sizeof(threadtmp->debugreg7));
-    if (r != sizeof(threadtmp->debugreg7)) goto bad_read;
-#else
-    #error
-#endif
+    r = read_kern(ctx, file, &debugregs, sizeof(debugregs));
+    if (r != sizeof(debugregs)) goto bad_read;
 
     return 0;
 

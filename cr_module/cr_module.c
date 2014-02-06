@@ -21,7 +21,7 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
- * $Id: cr_module.c,v 1.51 2008/12/16 00:45:07 phargrov Exp $
+ * $Id: cr_module.c,v 1.51.4.1 2012/12/25 03:27:28 phargrov Exp $
  */
 
 #include "cr_module.h"
@@ -131,17 +131,17 @@ static int __init cr_init_module(void)
 	}
 
 	err = -ENOMEM;
-	cr_pdata_cachep = KMEM_CACHE(cr_pdata_s, 0);
+	cr_pdata_cachep = CR_KMEM_CACHE(cr_pdata_s);
 	if (!cr_pdata_cachep) goto no_pdata_cachep;
-	cr_task_cachep = KMEM_CACHE(cr_task_s, 0);
+	cr_task_cachep = CR_KMEM_CACHE(cr_task_s);
 	if (!cr_task_cachep) goto no_task_cachep;
-	cr_chkpt_req_cachep = KMEM_CACHE(cr_chkpt_req_s, 0);
+	cr_chkpt_req_cachep = CR_KMEM_CACHE(cr_chkpt_req_s);
 	if (!cr_chkpt_req_cachep) goto no_chkpt_req_cachep;
-	cr_chkpt_proc_req_cachep = KMEM_CACHE(cr_chkpt_preq_s, 0);
+	cr_chkpt_proc_req_cachep = CR_KMEM_CACHE(cr_chkpt_preq_s);
 	if (!cr_chkpt_proc_req_cachep) goto no_chkpt_proc_req_cachep;
-	cr_rstrt_req_cachep = KMEM_CACHE(cr_rstrt_req_s, 0);
+	cr_rstrt_req_cachep = CR_KMEM_CACHE(cr_rstrt_req_s);
 	if (!cr_rstrt_req_cachep) goto no_rstrt_req_cachep;
-	cr_rstrt_proc_req_cachep = KMEM_CACHE(cr_rstrt_preq_s, 0);
+	cr_rstrt_proc_req_cachep = CR_KMEM_CACHE(cr_rstrt_preq_s);
 	if (!cr_rstrt_proc_req_cachep) goto no_rstrt_proc_req_cachep;
 
 	return 0;

@@ -121,7 +121,7 @@ module_phony = modules _depmod depmod _insmod insmod rmmod
 # or if our imports template has changed
 CONFIG_STATUS_DEPENDENCIES = \
 	@LINUX_OBJ@/.config \
-	@LINUX_OBJ@/include/linux/version.h \
+	@LINUX_VERSION_H@ \
 	@LINUX_SYMTAB_FILE@ \
 	@TOP_SRCDIR@/include/blcr_imports.h.in
 
