@@ -124,8 +124,8 @@ Description: Development files for BLCR
 Package: blcr-dkms
 Architecture: all
 Section: kernel
-Depends: dkms, make, linux-headers-2.6-686 | linux-headers-2.6-amd64 | linux-headers-generic | linux-headers, ${misc:Depends}
-Recommends: blcr-util
+Depends: dkms, make, ${misc:Depends}
+Recommends: blcr-util, linux-headers-686-pae | linux-headers-amd64 | linux-headers-generic
 Replaces: blcr-source
 Description: DKMS support for BLCR kernel module
  This package provides integration with the DKMS infrastructure for
