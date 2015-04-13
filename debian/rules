@@ -40,7 +40,6 @@ endif
 
 # Name of the source package
 psource:=blcr-source
-dkmssource:=blcr-dkms
 # The short upstream name, used for the module source directory
 sname:=blcr
 
@@ -120,7 +119,6 @@ install: build
 	dh_installdirs
 #	Create the directories to install the source into
 	dh_installdirs -p$(psource) usr/src/modules/$(sname)
-	dh_installdirs -p$(dkmssource) usr/src/$(sname)-$(version)
 	#                usr/src/modules/$(sname)/include 
 	dh_installdirs
 
@@ -161,27 +159,6 @@ endif
 		debian/$(psource)/usr/src/modules/$(sname)/debian/
 	
 	cd debian/$(psource)/usr/src && tar ch modules | bzip2 -9 > $(sname).tar.bz2 && rm -rf modules
-
-	# Base the DKMS source on the blcr.tar.bz2 that we ship! 
-	cd $(CURDIR)/debian/$(dkmssource)/usr/src/$(sname)-$(version) && tar --strip-components=2 -xjf $(CURDIR)/debian/$(psource)/usr/src/blcr.tar.bz2
-
-	# we don't ship -source anymore, so delete it!
-	-rm -rf $(CURDIR)/debian/$(psource)/
-
-	# clean up the shipped source
-	# Tests should be executable
-	find $(CURDIR)/debian/$(dkmssource)/usr/src/$(sname)-$(version)/tests/ -iname '*.sh' -exec chmod a+x {} \;
-	# we don't duplicate this everywhere, it's in /usr/share/doc
-	find $(CURDIR)/debian/$(dkmssource)/ -name 'license.txt' -exec rm {} \;	
-	cd $(CURDIR)/debian/$(dkmssource)/usr/src/$(sname)-$(version)/ && rm COPYING COPYING.LIB LICENSE.txt
-	# make more things executable that should be
-	cd $(CURDIR)/debian/$(dkmssource)/usr/src/$(sname)-$(version)/ && chmod a+x contrib/cr_depmod debian/conf.mk etc/blcr.rc
-	# make some things *not* executable
-	cd $(CURDIR)/debian/$(dkmssource)/usr/src/$(sname)-$(version)/ && chmod a-x vmadump4/vmadump_sparc.c cr_module/arch/sparc/cr_arch.h 
-
-	sed -e 's/[@]VERSION[@]/$(version)/' debian/dkms.conf.in \
-             > debian/$(dkmssource)/usr/src/$(sname)-$(version)/dkms.conf
-
 
 	dh_installdocs
 

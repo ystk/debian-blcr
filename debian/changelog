@@ -1,3 +1,11 @@
+blcr (0.8.5-2.2) unstable; urgency=medium
+
+  * Non-maintainer upload.
+  * Don't ship dkms package, it's not compatible with linux 3.16
+    (closes: #714045).
+
+ -- Julien Cristau <jcristau@debian.org>  Fri, 07 Nov 2014 11:47:33 +0000
+
 blcr (0.8.5-2.1) unstable; urgency=high
 
   * Non-maintainer upload.
